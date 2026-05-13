@@ -1,0 +1,86 @@
+import os
+from fastapi import FastAPI, Request, Response, HTTPException
+from twilio.rest import Client as TwilioClient
+from twilio.twiml.messaging_response import MessagingResponse
+from twilio.request_validator import RequestValidator
+from dotenv import load_dotenv
+
+from ai_engine import analyze_triage
+from database import log_incident
+
+load_dotenv()
+
+app = FastAPI(title="WhatsApp Emergency Triage Bot")
+
+# Twilio Config
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER") # e.g., whatsapp:+14155238886
+PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER") # The plumber's real number
+
+twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN)
+
+@app.get("/")
+async def root():
+    return {"status": "running", "service": "Plumbing Triage Bot"}
+
+@app.post("/webhook")
+async def whatsapp_webhook(request: Request):
+    # Parse form data from Twilio
+    form_data = await request.form()
+    
+    # Simple validation (Twilio signature validation can be added here)
+    # validator = RequestValidator(TWILIO_AUTH_TOKEN)
+    # signature = request.headers.get("X-Twilio-Signature", "")
+    # url = str(request.url)
+    # if not validator.validate(url, form_data, signature):
+    #     raise HTTPException(status_code=403, detail="Invalid signature")
+
+    customer_phone = form_data.get("From")
+    body = form_data.get("Body", "")
+    media_url = form_data.get("MediaUrl0") # Twilio sends MediaUrl0, MediaUrl1, etc.
+    
+    print(f"Received message from {customer_phone}: {body}")
+
+    # 1. AI Triage
+    triage_result = await analyze_triage(body, media_url)
+    urgency = triage_result.get("urgency", "MEDIUM")
+    summary = triage_result.get("summary", "No summary available")
+    
+    # 2. Log to Database
+    log_incident(
+        customer_phone=customer_phone,
+        plumber_phone=PLUMBER_NUMBER,
+        urgency=urgency,
+        summary=summary,
+        raw_message=body,
+        image_url=media_url
+    )
+
+    # 3. Response Logic
+    twiml_resp = MessagingResponse()
+    
+    if urgency == "HIGH":
+        # Alert the Plumber
+        alert_msg = f"🚨 EMERGENCY ALERT\n\nIssue: {summary}\nFrom: {customer_phone}\n\nClick to call: tel:{customer_phone.replace('whatsapp:', '')}"
+        
+        try:
+            twilio_client.messages.create(
+                from_=TWILIO_NUMBER,
+                body=alert_msg,
+                to=PLUMBER_NUMBER
+            )
+        except Exception as e:
+            print(f"Failed to alert plumber: {e}")
+
+        # Reply to Customer
+        twiml_resp.message("🚨 We have detected this is an EMERGENCY. Our plumber has been alerted and will contact you immediately.")
+    else:
+        # Standard reply
+        twiml_resp.message(f"Thank you for reaching out. We've logged your request regarding: {summary}. A member of our team will contact you shortly.")
+
+    return Response(content=str(twiml_resp), media_type="application/xml")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
