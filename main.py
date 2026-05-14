@@ -26,29 +26,27 @@ async def root():
 
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request):
-    # Parse form data from Twilio
     form_data = await request.form()
-    
     customer_phone = form_data.get("From")
     body = form_data.get("Body", "")
-    media_url = form_data.get("MediaUrl0")
-    
-    print(f"Received message from {customer_phone}: {body}")
+    # Twilio receives images as MediaUrl0
+    incoming_media = form_data.get("MediaUrl0") 
 
-    # Use shared logic
     from shared_logic import process_incoming_incident
-    triage_result, notification_sent = await process_incoming_incident(customer_phone, body, media_url)
+    triage_result, _ = await process_incoming_incident(customer_phone, body, incoming_media)
     
     urgency = triage_result.get("urgency", "MEDIUM")
-    summary = triage_result.get("summary", "No summary available")
+    summary = triage_result.get("summary", "")
 
-    # Response Logic for Twilio
     twiml_resp = MessagingResponse()
-    
+    msg = twiml_resp.message()
+
     if urgency == "HIGH":
-        twiml_resp.message("🚨 We have detected this is an EMERGENCY. Our plumber has been alerted and will contact you immediately.")
+        msg.body(f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now.")
+        # If you want to send an image BACK to them (e.g., a map or plumber photo):
+        # msg.media("https://your-public-image-url.com/image.png") 
     else:
-        twiml_resp.message(f"Thank you for reaching out. We've logged your request regarding: {summary}. A member of our team will contact you shortly.")
+        msg.body(f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged as standard maintenance. We will contact you during business hours.")
 
     return Response(content=str(twiml_resp), media_type="application/xml")
 
