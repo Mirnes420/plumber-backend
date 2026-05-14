@@ -12,11 +12,11 @@ load_dotenv()
 
 app = FastAPI(title="WhatsApp Emergency Triage Bot")
 
-# Twilio Config
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER") # e.g., whatsapp:+14155238886
-PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER") # The plumber's real number
+# Twilio Config (Strip to avoid issues with trailing spaces in .env)
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "").strip()
+PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
 
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN)
 

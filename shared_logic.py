@@ -6,11 +6,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Twilio Config
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
-PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
+# Twilio Config (Strip to avoid issues with trailing spaces in .env)
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "").strip()
+PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
 
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN)
 
@@ -52,13 +52,15 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
             "to": PLUMBER_NUMBER,
         }
         
+        # Attach media to top-level if present (helps Twilio process it)
+        if media_url:
+            payload["media_url"] = [media_url]
+        
         # 1. Content SID Path (Templates)
         if content_sid:
-            payload["content_sid"] = content_sid
+            payload["content_sid"] = content_sid.strip()
             # When using Content SID, Twilio expects variables, not a raw body
             # payload["content_variables"] = json.dumps({"1": summary, "2": urgency})
-            if media_url:
-                payload["media_url"] = [media_url]
         
         # 2. Interactive Buttons Path (Fallback)
         else:
@@ -76,6 +78,7 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
                     ]
                 }
             }
+            # Also put in interactive header for UI consistency
             if media_url:
                 interactive_data["header"] = {"type": "image", "image": {"link": media_url}}
             
