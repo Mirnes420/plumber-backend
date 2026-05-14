@@ -49,30 +49,36 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     
     notification_sent = False
     try:
+        import httpx
         import json
-        payload = {
-            "from_": TWILIO_NUMBER,
-            "to": PLUMBER_NUMBER,
-            "body": alert_msg,
-            "persistent_action": [
-                json.dumps({
-                    "type": "button",
-                    "body": {"text": "Choose a filter:"},
-                    "action": {
-                        "buttons": [
-                            {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
-                            {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
-                            {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
-                        ]
-                    }
-                })
-            ]
+        
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
+        auth = (TWILIO_SID, TWILIO_AUTH_TOKEN)
+        
+        interactive_payload = {
+            "type": "button",
+            "body": {"text": alert_msg},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "URGENT", "title": "Urgent"}},
+                    {"type": "reply", "reply": {"id": "NOT_URGENT", "title": "Not Urgent"}},
+                    {"type": "reply", "reply": {"id": "ALL_TASKS", "title": "All Tasks"}}
+                ]
+            }
+        }
+        
+        data = {
+            "From": TWILIO_NUMBER,
+            "To": PLUMBER_NUMBER,
+            "Interactive": json.dumps(interactive_payload)
         }
         
         if media_url:
-            payload["media_url"] = [media_url]
+            data["MediaUrl"] = media_url
             
-        twilio_client.messages.create(**payload)
+        with httpx.Client() as client:
+            client.post(url, auth=auth, data=data)
+            
         notification_sent = True
     except Exception as e:
         print(f"Failed to notify plumber: {e}")
