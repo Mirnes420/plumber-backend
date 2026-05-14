@@ -59,8 +59,10 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         # 1. Content SID Path (Templates)
         if content_sid:
             payload["content_sid"] = content_sid.strip()
-            # When using Content SID, Twilio expects variables, not a raw body
-            # payload["content_variables"] = json.dumps({"1": summary, "2": urgency})
+            # Pass named variable as seen in screenshot: {{customer_phone}}
+            payload["content_variables"] = json.dumps({
+                "customer_phone": customer_phone.replace("whatsapp:", "")
+            })
         
         # 2. Interactive Buttons Path (Fallback)
         else:
