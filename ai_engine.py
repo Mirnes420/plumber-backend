@@ -74,6 +74,6 @@ async def analyze_triage(text: str, image_url: str = None):
         # Default fallback as per requirements
         return {
             "urgency": "MEDIUM",
-            "summary": "AI Analysis Failed. Manual review required.",
+            "summary": f"AI Analysis Failed. Manual review required. {e}",
             "action_required": True
         }
