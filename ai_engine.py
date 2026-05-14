@@ -42,7 +42,9 @@ async def analyze_triage(text: str, image_url: str = None):
         contents = [f"Customer Message: {text}"]
         
         if image_url:
-            async with httpx.AsyncClient() as client_httpx:
+            # Set a User-Agent to avoid being blocked by some CDNs (like Twilio's)
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+            async with httpx.AsyncClient(follow_redirects=True, headers=headers) as client_httpx:
                 response = await client_httpx.get(image_url)
                 if response.status_code == 200:
                     image_part = types.Part.from_bytes(
@@ -50,6 +52,8 @@ async def analyze_triage(text: str, image_url: str = None):
                         mime_type="image/jpeg"
                     )
                     contents.append(image_part)
+                else:
+                    print(f"Failed to download image: HTTP {response.status_code}")
         
         # Generate content with system instruction
         response = client.models.generate_content(

@@ -28,25 +28,47 @@ async def root():
 async def whatsapp_webhook(request: Request):
     form_data = await request.form()
     customer_phone = form_data.get("From")
-    body = form_data.get("Body", "")
-    # Twilio receives images as MediaUrl0
-    incoming_media = form_data.get("MediaUrl0") 
+    body_raw = form_data.get("Body", "").strip()
+    body_upper = body_raw.upper()
+    incoming_media = form_data.get("MediaUrl0")
+    
+    twiml_resp = MessagingResponse()
 
+    # 1. Handle Commands (Filtering in WhatsApp Chat)
+    if body_upper in ["URGENT", "ALL", "TASKS"]:
+        from database import get_incidents
+        incidents = get_incidents()
+        
+        if body_upper == "URGENT":
+            filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
+            title = "*🚨 Recent Urgent Tasks*"
+        else:
+            filtered = incidents[:5]
+            title = "*📋 All Recent Tasks*"
+        
+        if not filtered:
+            twiml_resp.message(f"{title}\nNo tasks found.")
+        else:
+            msg_text = f"{title}\n\n"
+            for i in filtered:
+                time_str = i['timestamp'].strftime("%H:%M") if hasattr(i['timestamp'], 'strftime') else str(i['timestamp'])[:5]
+                msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
+            twiml_resp.message(msg_text)
+        
+        return Response(content=str(twiml_resp), media_type="application/xml")
+
+    # 2. Handle New Incidents
     from shared_logic import process_incoming_incident
-    triage_result, _ = await process_incoming_incident(customer_phone, body, incoming_media)
+    triage_result, _ = await process_incoming_incident(customer_phone, body_raw, incoming_media)
     
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "")
 
-    twiml_resp = MessagingResponse()
     msg = twiml_resp.message()
-
     if urgency == "HIGH":
         msg.body(f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now.")
-        # If you want to send an image BACK to them (e.g., a map or plumber photo):
-        # msg.media("https://your-public-image-url.com/image.png") 
     else:
-        msg.body(f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged as standard maintenance. We will contact you during business hours.")
+        msg.body(f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly.")
 
     return Response(content=str(twiml_resp), media_type="application/xml")
 

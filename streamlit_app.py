@@ -62,6 +62,13 @@ if check_password():
 
     with tab1:
         st.markdown("Monitor and manage incoming WhatsApp triage requests.")
+        
+        # URL-based filtering logic
+        query_params = st.query_params
+        default_urgency = query_params.get("urgency", "HIGH") # Default to HIGH as requested
+        if isinstance(default_urgency, list): default_urgency = default_urgency[0]
+        
+        # Fetch data
         incidents = get_incidents()
         
         if not incidents:
@@ -70,10 +77,18 @@ if check_password():
             df = pd.DataFrame(incidents)
             
             st.sidebar.header("Filters")
-            urgency_filter = st.sidebar.multiselect("Urgency", options=["HIGH", "MEDIUM", "LOW"], default=["HIGH", "MEDIUM", "LOW"])
+            
+            # Select filters based on query params or default
+            available_urgencies = ["HIGH", "MEDIUM", "LOW"]
+            selected_urgencies = st.sidebar.multiselect(
+                "Urgency", 
+                options=available_urgencies, 
+                default=[default_urgency] if default_urgency in available_urgencies else available_urgencies
+            )
+            
             status_filter = st.sidebar.multiselect("Status", options=["PENDING", "RESOLVED"], default=["PENDING", "RESOLVED"])
             
-            filtered_df = df[df['urgency'].isin(urgency_filter) & df['status'].isin(status_filter)]
+            filtered_df = df[df['urgency'].isin(selected_urgencies) & df['status'].isin(status_filter)]
 
             col1, col2, col3 = st.columns(3)
             col1.metric("Total Incidents", len(df))

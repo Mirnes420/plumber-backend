@@ -19,7 +19,7 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     Core logic to handle an incoming plumbing request:
     1. AI Analysis
     2. DB Logging
-    3. Emergency Notification (if HIGH)
+    3. Notification (For ALL incidents, with priority label)
     Returns: (triage_result, notification_sent)
     """
     # 1. AI Triage
@@ -37,19 +37,32 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         image_url=media_url
     )
 
-    # 3. Notification Logic
+    # 3. Notification Logic (Now for ALL incidents)
+    icon = "🚨 EMERGENCY" if urgency == "HIGH" else "📅 MAINTENANCE"
+    
+    # We add "Buttons" as keywords that the plumber can reply with
+    alert_msg = (
+        f"{icon} ALERT\n\n"
+        f"Priority: *{urgency}*\n"
+        f"Summary: {summary}\n"
+        f"From: {customer_phone}\n\n"
+        f"--- Quick Actions ---\n"
+        f"Reply *URGENT* to see emergencies\n"
+        f"Reply *ALL* to see recent tasks\n\n"
+        f"🔗 Dashboard: https://your-dashboard.com/?urgency=HIGH"
+    )
+    
     notification_sent = False
-    if urgency == "HIGH":
-        alert_msg = f"🚨 EMERGENCY ALERT\n\nIssue: {summary}\nFrom: {customer_phone}\n\nClick to call: tel:{customer_phone.replace('whatsapp:', '')}"
-        
-        try:
-            twilio_client.messages.create(
-                from_=TWILIO_NUMBER,
-                body=alert_msg,
-                to=PLUMBER_NUMBER
-            )
-            notification_sent = True
-        except Exception as e:
-            print(f"Failed to alert plumber: {e}")
+    try:
+        # Pass the media_url in a list to Twilio
+        # Note: Twilio's incoming media URLs work best when sent back as media_url
+        payload = {"from_": TWILIO_NUMBER, "body": alert_msg, "to": PLUMBER_NUMBER}
+        if media_url:
+            payload["media_url"] = [media_url]
+            
+        twilio_client.messages.create(**payload)
+        notification_sent = True
+    except Exception as e:
+        print(f"Failed to notify plumber: {e}")
 
     return triage_result, notification_sent
