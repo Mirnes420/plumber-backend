@@ -14,6 +14,13 @@ if not GOOGLE_API_KEY:
 
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
+# THE REQUIRED HIERARCHY
+MODEL_TIERS = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash"
+]
 
 SYSTEM_PROMPT = """
 You are an expert plumbing emergency dispatcher. 
@@ -35,14 +42,13 @@ You MUST respond with a valid JSON object only:
 
 async def analyze_triage(text: str, image_url: str = None):
     """
-    Analyzes text and optionally an image using google-genai (Gemini 1.5 Pro).
-    Returns a dict with urgency, summary, and action_required.
+    Analyzes text and optionally an image using a tiered fallback system.
     """
-    try:
-        contents = [f"Customer Message: {text}"]
-        
-        if image_url:
-            # Set a User-Agent to avoid being blocked by some CDNs (like Twilio's)
+    contents = [f"Customer Message: {text}"]
+    
+    # 1. Fetch image if provided
+    if image_url:
+        try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
             async with httpx.AsyncClient(follow_redirects=True, headers=headers) as client_httpx:
                 response = await client_httpx.get(image_url)
@@ -54,26 +60,32 @@ async def analyze_triage(text: str, image_url: str = None):
                     contents.append(image_part)
                 else:
                     print(f"Failed to download image: HTTP {response.status_code}")
-        
-        # Generate content with system instruction
-        response = client.models.generate_content(
-            model='gemini-2.5-flash-lite',
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                response_mime_type="application/json"
+        except Exception as e:
+            print(f"Image processing error: {e}")
+
+    # 2. Sequential Fallback Logic
+    for model_name in MODEL_TIERS:
+        try:
+            print(f"Attempting analysis with {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    response_mime_type="application/json"
+                )
             )
-        )
+            
+            if response.text:
+                return json.loads(response.text)
         
-        # Parse JSON response
-        result = json.loads(response.text)
-        return result
-    
-    except Exception as e:
-        print(f"AI Engine Error: {e}")
-        # Default fallback as per requirements
-        return {
-            "urgency": "MEDIUM",
-            "summary": f"AI Analysis Failed. Manual review required. {e}",
-            "action_required": True
-        }
+        except Exception as e:
+            print(f"Model {model_name} failed: {e}. Moving to next tier...")
+            continue  # Hit the next model in the list
+
+    # 3. Final Fallback if ALL models crash
+    return {
+        "urgency": "MEDIUM",
+        "summary": "Critical AI Failure. All model tiers (2.5 & 2.0) failed. Manual review required.",
+        "action_required": True
+    }
