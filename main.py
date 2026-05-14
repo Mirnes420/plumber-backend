@@ -30,35 +30,35 @@ async def whatsapp_webhook(request: Request):
     customer_phone = form_data.get("From")
     body_raw = form_data.get("Body", "").strip()
     body_upper = body_raw.upper()
-
+    incoming_media = form_data.get("MediaUrl0")
+    
     twiml_resp = MessagingResponse()
 
-    from database import get_incidents
-    incidents = get_incidents()
-
-    if body_upper == "urgent":
-        filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
-        title = "*🚨 Urgent Tasks*"
-    elif body_upper == "not_urgent":
-        filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
-        title = "*✅ Non-Urgent Tasks*"
-    elif body_upper in ["all_tasks"]:
-        filtered = incidents[:5]
-        title = "*📋 All Tasks*"
-    else:
+    # 1. Handle Commands (Filtering in WhatsApp Chat)
+    if body_upper in ["urgent", "not_urgent", "all_tasks"]:
+        from database import get_incidents
+        incidents = get_incidents()
+        
+        if body_upper == "urgent":
+            filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
+            title = "*🚨 Recent Urgent Tasks*"
+        elif body_upper == "not_urgent":
+            filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
+            title = "*✅ Non-Urgent Tasks*"
+        elif body_upper == "all_tasks":
+            filtered = incidents[:5]
+            title = "*📋 All Tasks*"
+        
+        if not filtered:
+            twiml_resp.message(f"{title}\nNo tasks found.")
+        else:
+            msg_text = f"{title}\n\n"
+            for i in filtered:
+                time_str = i['timestamp'].strftime("%H:%M") if hasattr(i['timestamp'], 'strftime') else str(i['timestamp'])[:5]
+                msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
+            twiml_resp.message(msg_text)
+        
         return Response(content=str(twiml_resp), media_type="application/xml")
-
-    if not filtered:
-        twiml_resp.message(f"{title}\nNo tasks found.")
-    else:
-        msg_text = f"{title}\n\n"
-        for i in filtered:
-            time_str = i['timestamp'].strftime("%H:%M") if hasattr(i['timestamp'], 'strftime') else str(i['timestamp'])[:5]
-            msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
-        twiml_resp.message(msg_text)
-
-    return Response(content=str(twiml_resp), media_type="application/xml")
-
 
     # 2. Handle New Incidents
     from shared_logic import process_incoming_incident
