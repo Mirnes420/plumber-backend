@@ -4,7 +4,7 @@ from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
 from twilio.request_validator import RequestValidator
 from dotenv import load_dotenv
-
+import json
 from ai_engine import analyze_triage
 from database import log_incident
 
@@ -12,11 +12,11 @@ load_dotenv()
 
 app = FastAPI(title="WhatsApp Emergency Triage Bot")
 
-# Twilio Config (Strip to avoid issues with trailing spaces in .env)
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER", "").strip()
-PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
+# Twilio Config
+TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER") # e.g., whatsapp:+14155238886
+PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER") # The plumber's real number
 
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN)
 
@@ -30,63 +30,65 @@ async def whatsapp_webhook(request: Request):
     customer_phone = form_data.get("From")
     body_raw = form_data.get("Body", "").strip()
     body_upper = body_raw.upper()
-    incoming_media = form_data.get("MediaUrl0")
-    
+
     twiml_resp = MessagingResponse()
 
-    # 1. Handle Commands (Filtering in WhatsApp Chat)
+    # Handle Commands (Filtering in WhatsApp Chat)
     if body_upper in ["URGENT", "NOT_URGENT", "ALL_TASKS"]:
         from database import get_incidents
         incidents = get_incidents()
-        
+
         if body_upper == "URGENT":
             filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
             title = "*🚨 Recent Urgent Tasks*"
         elif body_upper == "NOT_URGENT":
             filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
             title = "*✅ Non-Urgent Tasks*"
-        else:
+        else:  # ALL_TASKS
             filtered = incidents[:5]
             title = "*📋 All Recent Tasks*"
-        
+
         if not filtered:
             msg_text = f"{title}\nNo tasks found."
         else:
             msg_text = f"{title}\n\n"
             for i in filtered:
+                time_str = (
+                    i['timestamp'].strftime("%H:%M")
+                    if hasattr(i['timestamp'], 'strftime')
+                    else str(i['timestamp'])[:5]
+                )
                 msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
-        
-        # Send interactive message via REST API
-        import json
-        content_sid = os.getenv("TWILIO_CONTENT_SID")
-        
+
+        # Build interactive Quick Reply buttons
+        interactive_data = {
+            "type": "button",
+            "body": {"text": msg_text},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "URGENT", "title": "Urgent"}},
+                    {"type": "reply", "reply": {"id": "NOT_URGENT", "title": "Not Urgent"}},
+                    {"type": "reply", "reply": {"id": "ALL_TASKS", "title": "All Tasks"}}
+                ]
+            }
+        }
+
+        # Send interactive message with dynamic variables
         payload = {
             "from_": TWILIO_NUMBER,
             "to": customer_phone,
+            "interactive": interactive_data,
+            "content_variables": json.dumps({
+                "customer_phone": customer_phone
+            })
         }
 
-        if content_sid:
-            payload["content_sid"] = content_sid
-            # payload["content_variables"] = json.dumps({"1": msg_text})
-        else:
-            payload["body"] = msg_text if msg_text.strip() else "No tasks found."
-            interactive_data = {
-                "type": "button",
-                "header": {"type": "text", "text": title},
-                "body": {"text": payload["body"]},
-                "action": {
-                    "buttons": [
-                        {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
-                        {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
-                        {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
-                    ]
-                }
-            }
-            payload["persistent_action"] = [json.dumps(interactive_data)]
-
         twilio_client.messages.create(**payload)
-        
-        return Response(content="", media_type="application/xml")
+
+        return Response(status_code=200)
+
+    # If no matching command, just acknowledge
+    return Response(status_code=200)
 
     # 2. Handle New Incidents
     from shared_logic import process_incoming_incident
