@@ -37,26 +37,38 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         image_url=media_url
     )
 
-    # 3. Notification Logic (Now for ALL incidents)
+    # 3. Notification Logic (Now for ALL incidents with Interactive Buttons)
     icon = "🚨 EMERGENCY" if urgency == "HIGH" else "📅 MAINTENANCE"
     
-    # We add "Buttons" as keywords that the plumber can reply with
     alert_msg = (
         f"{icon} ALERT\n\n"
         f"Priority: *{urgency}*\n"
         f"Summary: {summary}\n"
-        f"From: {customer_phone}\n\n"
-        f"--- Quick Actions ---\n"
-        f"Reply *URGENT* to see emergencies\n"
-        f"Reply *ALL* to see recent tasks\n\n"
-        f"🔗 Dashboard: https://your-dashboard.com/?urgency=HIGH"
+        f"From: {customer_phone}"
     )
     
     notification_sent = False
     try:
-        # Pass the media_url in a list to Twilio
-        # Note: Twilio's incoming media URLs work best when sent back as media_url
-        payload = {"from_": TWILIO_NUMBER, "body": alert_msg, "to": PLUMBER_NUMBER}
+        import json
+        payload = {
+            "from_": TWILIO_NUMBER,
+            "to": PLUMBER_NUMBER,
+            "body": alert_msg,
+            "persistent_action": [
+                json.dumps({
+                    "type": "button",
+                    "body": {"text": "Choose a filter:"},
+                    "action": {
+                        "buttons": [
+                            {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
+                            {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
+                            {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
+                        ]
+                    }
+                })
+            ]
+        }
+        
         if media_url:
             payload["media_url"] = [media_url]
             

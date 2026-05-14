@@ -35,30 +35,50 @@ async def whatsapp_webhook(request: Request):
     twiml_resp = MessagingResponse()
 
     # 1. Handle Commands (Filtering in WhatsApp Chat)
-    if body_upper in ["urgent", "not_urgent", "all_tasks"]:
+    if body_upper in ["URGENT", "NOT_URGENT", "ALL_TASKS"]:
         from database import get_incidents
         incidents = get_incidents()
         
-        if body_upper == "urgent":
+        if body_upper == "URGENT":
             filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
             title = "*🚨 Recent Urgent Tasks*"
-        elif body_upper == "not_urgent":
+        elif body_upper == "NOT_URGENT":
             filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
             title = "*✅ Non-Urgent Tasks*"
-        elif body_upper == "all_tasks":
+        else:
             filtered = incidents[:5]
-            title = "*📋 All Tasks*"
+            title = "*📋 All Recent Tasks*"
         
         if not filtered:
-            twiml_resp.message(f"{title}\nNo tasks found.")
+            msg_text = f"{title}\nNo tasks found."
         else:
             msg_text = f"{title}\n\n"
             for i in filtered:
-                time_str = i['timestamp'].strftime("%H:%M") if hasattr(i['timestamp'], 'strftime') else str(i['timestamp'])[:5]
                 msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
-            twiml_resp.message(msg_text)
         
-        return Response(content=str(twiml_resp), media_type="application/xml")
+        # Send interactive message via REST API
+        import json
+        twilio_client.messages.create(
+            from_=TWILIO_NUMBER,
+            to=customer_phone,
+            body=msg_text,
+            # We add buttons again so they can keep filtering
+            persistent_action=[
+                json.dumps({
+                    "type": "button",
+                    "body": {"text": "Choose another filter:"},
+                    "action": {
+                        "buttons": [
+                            {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
+                            {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
+                            {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
+                        ]
+                    }
+                })
+            ]
+        )
+        
+        return Response(content="", media_type="application/xml")
 
     # 2. Handle New Incidents
     from shared_logic import process_incoming_incident
