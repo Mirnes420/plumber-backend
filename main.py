@@ -58,24 +58,33 @@ async def whatsapp_webhook(request: Request):
         
         # Send interactive message via REST API
         import json
-        interactive_data = {
-            "type": "button",
-            "header": {"type": "text", "text": title},
-            "body": {"text": msg_text if msg_text.strip() else "No tasks found."},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
-                    {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
-                    {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
-                ]
-            }
+        content_sid = os.getenv("TWILIO_CONTENT_SID")
+        
+        payload = {
+            "from_": TWILIO_NUMBER,
+            "to": customer_phone,
         }
 
-        twilio_client.messages.create(
-            from_=TWILIO_NUMBER,
-            to=customer_phone,
-            persistent_action=[json.dumps(interactive_data)]
-        )
+        if content_sid:
+            payload["content_sid"] = content_sid
+            # payload["content_variables"] = json.dumps({"1": msg_text})
+        else:
+            payload["body"] = msg_text if msg_text.strip() else "No tasks found."
+            interactive_data = {
+                "type": "button",
+                "header": {"type": "text", "text": title},
+                "body": {"text": payload["body"]},
+                "action": {
+                    "buttons": [
+                        {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
+                        {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
+                        {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
+                    ]
+                }
+            }
+            payload["persistent_action"] = [json.dumps(interactive_data)]
+
+        twilio_client.messages.create(**payload)
         
         return Response(content="", media_type="application/xml")
 

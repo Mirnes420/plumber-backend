@@ -37,54 +37,51 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         image_url=media_url
     )
 
-    # 3. Notification Logic (Now for ALL incidents with Interactive Buttons)
+    # 3. Notification Logic (Fixing parameter conflicts)
     icon = "🚨 EMERGENCY" if urgency == "HIGH" else "📅 MAINTENANCE"
+    alert_body = f"{icon} Alert: {summary} from {customer_phone}"
     
-    # Header text (short)
-    header_text = f"{icon} Alert"
-    
-    # Body text (detailed)
-    alert_body = (
-        f"Priority: *{urgency}*\n"
-        f"Summary: {summary}\n"
-        f"From: {customer_phone}"
-    )
+    content_sid = os.getenv("TWILIO_CONTENT_SID")
     
     notification_sent = False
     try:
         import json
-        
-        # Build the interactive payload
-        interactive_data = {
-            "type": "button",
-            "body": {"text": alert_body},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
-                    {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
-                    {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
-                ]
-            }
+        # Base payload
+        payload = {
+            "from_": TWILIO_NUMBER,
+            "to": PLUMBER_NUMBER,
         }
         
-        # Add Image Header if media exists
-        if media_url:
-            interactive_data["header"] = {
-                "type": "image",
-                "image": {"link": media_url}
-            }
+        # 1. Content SID Path (Templates)
+        if content_sid:
+            payload["content_sid"] = content_sid
+            # When using Content SID, Twilio expects variables, not a raw body
+            # payload["content_variables"] = json.dumps({"1": summary, "2": urgency})
+            if media_url:
+                payload["media_url"] = [media_url]
+        
+        # 2. Interactive Buttons Path (Fallback)
         else:
-            interactive_data["header"] = {
-                "type": "text",
-                "text": header_text
+            payload["body"] = alert_body # Required for interactive messages
+            
+            interactive_data = {
+                "type": "button",
+                "header": {"type": "text", "text": f"{icon} Alert"},
+                "body": {"text": alert_body},
+                "action": {
+                    "buttons": [
+                        {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
+                        {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
+                        {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
+                    ]
+                }
             }
+            if media_url:
+                interactive_data["header"] = {"type": "image", "image": {"link": media_url}}
+            
+            payload["persistent_action"] = [json.dumps(interactive_data)]
 
-        # Send using persistent_action
-        twilio_client.messages.create(
-            from_=TWILIO_NUMBER,
-            to=PLUMBER_NUMBER,
-            persistent_action=[json.dumps(interactive_data)]
-        )
+        twilio_client.messages.create(**payload)
         notification_sent = True
     except Exception as e:
         print(f"Failed to notify plumber: {e}")
