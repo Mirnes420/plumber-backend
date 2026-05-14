@@ -29,54 +29,25 @@ async def whatsapp_webhook(request: Request):
     # Parse form data from Twilio
     form_data = await request.form()
     
-    # Simple validation (Twilio signature validation can be added here)
-    # validator = RequestValidator(TWILIO_AUTH_TOKEN)
-    # signature = request.headers.get("X-Twilio-Signature", "")
-    # url = str(request.url)
-    # if not validator.validate(url, form_data, signature):
-    #     raise HTTPException(status_code=403, detail="Invalid signature")
-
     customer_phone = form_data.get("From")
     body = form_data.get("Body", "")
-    media_url = form_data.get("MediaUrl0") # Twilio sends MediaUrl0, MediaUrl1, etc.
+    media_url = form_data.get("MediaUrl0")
     
     print(f"Received message from {customer_phone}: {body}")
 
-    # 1. AI Triage
-    triage_result = await analyze_triage(body, media_url)
+    # Use shared logic
+    from shared_logic import process_incoming_incident
+    triage_result, notification_sent = await process_incoming_incident(customer_phone, body, media_url)
+    
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
-    
-    # 2. Log to Database
-    log_incident(
-        customer_phone=customer_phone,
-        plumber_phone=PLUMBER_NUMBER,
-        urgency=urgency,
-        summary=summary,
-        raw_message=body,
-        image_url=media_url
-    )
 
-    # 3. Response Logic
+    # Response Logic for Twilio
     twiml_resp = MessagingResponse()
     
     if urgency == "HIGH":
-        # Alert the Plumber
-        alert_msg = f"🚨 EMERGENCY ALERT\n\nIssue: {summary}\nFrom: {customer_phone}\n\nClick to call: tel:{customer_phone.replace('whatsapp:', '')}"
-        
-        try:
-            twilio_client.messages.create(
-                from_=TWILIO_NUMBER,
-                body=alert_msg,
-                to=PLUMBER_NUMBER
-            )
-        except Exception as e:
-            print(f"Failed to alert plumber: {e}")
-
-        # Reply to Customer
         twiml_resp.message("🚨 We have detected this is an EMERGENCY. Our plumber has been alerted and will contact you immediately.")
     else:
-        # Standard reply
         twiml_resp.message(f"Thank you for reaching out. We've logged your request regarding: {summary}. A member of our team will contact you shortly.")
 
     return Response(content=str(twiml_resp), media_type="application/xml")

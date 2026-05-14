@@ -5,8 +5,26 @@ import os
 from dotenv import load_dotenv
 import asyncio
 from ai_engine import analyze_triage
+import multiprocessing
+import uvicorn
+from main import app
 
 load_dotenv()
+
+# Function to run FastAPI
+def run_fastapi():
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+# Start FastAPI in a separate process if not already running
+# We use a global check to avoid starting it multiple times on every rerun
+if "fastapi_started" not in st.session_state:
+    try:
+        # We use a simple port check or just try starting it
+        p = multiprocessing.Process(target=run_fastapi, daemon=True)
+        p.start()
+        st.session_state.fastapi_started = True
+    except Exception as e:
+        print(f"FastAPI start error: {e}")
 
 st.set_page_config(page_title="Plumbing Triage Admin", page_icon="🚰", layout="wide")
 
@@ -106,37 +124,38 @@ if check_password():
                     st.error("Please enter a message.")
                 else:
                     with st.spinner("AI is analyzing..."):
-                        # Execute async analysis
+                        # Execute shared logic (AI + DB + Notification)
+                        from shared_logic import process_incoming_incident
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
-                        result = loop.run_until_complete(analyze_triage(sim_msg, sim_image))
+                        result, notified = loop.run_until_complete(
+                            process_incoming_incident(sim_phone, sim_msg, sim_image)
+                        )
                         
                         # Save to session state to persist after form submission
                         st.session_state.sim_result = result
+                        st.session_state.sim_notified = notified
                         st.session_state.sim_data = {
                             "phone": sim_phone,
                             "msg": sim_msg,
                             "img": sim_image
                         }
+                        st.success("Analysis complete and logged to database!")
 
-        # Display results and DB logging option outside the form
+        # Display results outside the form
         if st.session_state.sim_result:
             st.divider()
             st.subheader("Analysis Result")
             st.json(st.session_state.sim_result)
             
-            if st.button("🚀 Log this to Database?", use_container_width=True):
-                log_incident(
-                    customer_phone=st.session_state.sim_data["phone"],
-                    plumber_phone=os.getenv("PLUMBER_WHATSAPP_NUMBER", "N/A"),
-                    urgency=st.session_state.sim_result['urgency'],
-                    summary=st.session_state.sim_result['summary'],
-                    raw_message=st.session_state.sim_data["msg"],
-                    image_url=st.session_state.sim_data["img"]
-                )
-                st.success("Incident logged to database successfully!")
-                # Reset simulation state
+            if st.session_state.sim_notified:
+                st.warning("🚨 EMERGENCY: A notification has been sent to the Plumber via WhatsApp!")
+            else:
+                st.info("Status: Logged and processed. No emergency alert sent.")
+            
+            if st.button("Clear Simulation Result", use_container_width=True):
                 st.session_state.sim_result = None
+                st.session_state.sim_notified = False
                 st.rerun()
 
     if st.button("Refresh Dashboard"):
