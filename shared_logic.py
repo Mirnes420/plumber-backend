@@ -55,6 +55,18 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
         auth = (TWILIO_SID, TWILIO_AUTH_TOKEN)
         
+        # 1. Send Media First (if present)
+        if media_url:
+            media_data = {
+                "From": TWILIO_NUMBER,
+                "To": PLUMBER_NUMBER,
+                "Body": f"📸 New image from customer for incident: {summary}",
+                "MediaUrl": media_url
+            }
+            with httpx.Client() as client:
+                client.post(url, auth=auth, data=media_data)
+
+        # 2. Send Interactive Buttons (Second Message)
         interactive_payload = {
             "type": "button",
             "body": {"text": alert_msg},
@@ -67,17 +79,14 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
             }
         }
         
-        data = {
+        button_data = {
             "From": TWILIO_NUMBER,
             "To": PLUMBER_NUMBER,
             "Interactive": json.dumps(interactive_payload)
         }
-        
-        if media_url:
-            data["MediaUrl"] = media_url
             
         with httpx.Client() as client:
-            client.post(url, auth=auth, data=data)
+            client.post(url, auth=auth, data=button_data)
             
         notification_sent = True
     except Exception as e:
