@@ -49,42 +49,33 @@ async def whatsapp_webhook(request: Request):
             filtered = incidents[:5]
             title = "*📋 All Recent Tasks*"
         
-        msg_text = f"{title}\n"
         if not filtered:
-            msg_text += "No tasks found."
+            msg_text = f"{title}\nNo tasks found."
         else:
+            msg_text = f"{title}\n\n"
             for i in filtered:
-                msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n"
+                msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
         
-        # Send interactive message via Raw REST API
-        import httpx
+        # Send interactive message via REST API
         import json
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
-        auth = (TWILIO_SID, TWILIO_AUTH_TOKEN)
-        
-        interactive_payload = {
+        interactive_data = {
             "type": "button",
-            "body": {"text": msg_text},
+            "header": {"type": "text", "text": title},
+            "body": {"text": msg_text if msg_text.strip() else "No tasks found."},
             "action": {
                 "buttons": [
-                    {"type": "reply", "reply": {"id": "URGENT", "title": "Urgent"}},
-                    {"type": "reply", "reply": {"id": "NOT_URGENT", "title": "Not Urgent"}},
-                    {"type": "reply", "reply": {"id": "ALL_TASKS", "title": "All Tasks"}}
+                    {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
+                    {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
+                    {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
                 ]
             }
         }
-        
-        data = {
-            "From": TWILIO_NUMBER,
-            "To": customer_phone,
-            "Interactive": json.dumps(interactive_payload)
-        }
-        
-        try:
-            with httpx.Client() as client:
-                client.post(url, auth=auth, data=data)
-        except Exception as e:
-            print(f"Failed to send interactive message: {e}")
+
+        twilio_client.messages.create(
+            from_=TWILIO_NUMBER,
+            to=customer_phone,
+            persistent_action=[json.dumps(interactive_data)]
+        )
         
         return Response(content="", media_type="application/xml")
 

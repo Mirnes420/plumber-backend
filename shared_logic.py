@@ -40,8 +40,11 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     # 3. Notification Logic (Now for ALL incidents with Interactive Buttons)
     icon = "🚨 EMERGENCY" if urgency == "HIGH" else "📅 MAINTENANCE"
     
-    alert_msg = (
-        f"{icon} ALERT\n\n"
+    # Header text (short)
+    header_text = f"{icon} Alert"
+    
+    # Body text (detailed)
+    alert_body = (
         f"Priority: *{urgency}*\n"
         f"Summary: {summary}\n"
         f"From: {customer_phone}"
@@ -49,45 +52,39 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     
     notification_sent = False
     try:
-        import httpx
         import json
         
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
-        auth = (TWILIO_SID, TWILIO_AUTH_TOKEN)
-        
-        # 1. Send Media First (if present)
-        if media_url:
-            media_data = {
-                "From": TWILIO_NUMBER,
-                "To": PLUMBER_NUMBER,
-                "Body": f"📸 New image from customer for incident: {summary}",
-                "MediaUrl": media_url
-            }
-            with httpx.Client() as client:
-                client.post(url, auth=auth, data=media_data)
-
-        # 2. Send Interactive Buttons (Second Message)
-        interactive_payload = {
+        # Build the interactive payload
+        interactive_data = {
             "type": "button",
-            "body": {"text": alert_msg},
+            "body": {"text": alert_body},
             "action": {
                 "buttons": [
-                    {"type": "reply", "reply": {"id": "URGENT", "title": "Urgent"}},
-                    {"type": "reply", "reply": {"id": "NOT_URGENT", "title": "Not Urgent"}},
-                    {"type": "reply", "reply": {"id": "ALL_TASKS", "title": "All Tasks"}}
+                    {"type": "reply", "reply": {"id": "urgent", "title": "Urgent"}},
+                    {"type": "reply", "reply": {"id": "not_urgent", "title": "Not Urgent"}},
+                    {"type": "reply", "reply": {"id": "all_tasks", "title": "All Tasks"}}
                 ]
             }
         }
         
-        button_data = {
-            "From": TWILIO_NUMBER,
-            "To": PLUMBER_NUMBER,
-            "Interactive": json.dumps(interactive_payload)
-        }
-            
-        with httpx.Client() as client:
-            client.post(url, auth=auth, data=button_data)
-            
+        # Add Image Header if media exists
+        if media_url:
+            interactive_data["header"] = {
+                "type": "image",
+                "image": {"link": media_url}
+            }
+        else:
+            interactive_data["header"] = {
+                "type": "text",
+                "text": header_text
+            }
+
+        # Send using persistent_action
+        twilio_client.messages.create(
+            from_=TWILIO_NUMBER,
+            to=PLUMBER_NUMBER,
+            persistent_action=[json.dumps(interactive_data)]
+        )
         notification_sent = True
     except Exception as e:
         print(f"Failed to notify plumber: {e}")
