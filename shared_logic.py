@@ -125,7 +125,8 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     print(f"Processing incident from {customer_phone} for plumber {plumber_override or 'DEFAULT'}")
     
     # 0. Plumber Lookup
-    target_plumber = PLUMBER_NUMBER
+    target_plumber = None
+    
     if plumber_override:
         # If it's already a phone number, use it
         if str(plumber_override).startswith("+") or str(plumber_override).startswith("whatsapp:"):
@@ -138,7 +139,12 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
                 target_plumber = plumber_obj.plumber_phone
                 print(f"📍 Routed to Plumber: {plumber_obj.name} ({target_plumber})")
             else:
-                print(f"⚠️ Plumber ID '{plumber_override}' not found. Using default.")
+                print(f"⚠️ Plumber ID '{plumber_override}' not found in DB.")
+    
+    # Fallback to default if no valid plumber found yet
+    if not target_plumber:
+        target_plumber = PLUMBER_NUMBER
+        print(f"ℹ️ Using default plumber number: {target_plumber}")
     
     # 1. AI Triage
     triage_result = await analyze_triage(body, media_url, image_bytes)
