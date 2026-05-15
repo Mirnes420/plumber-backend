@@ -141,7 +141,6 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     )
 
     # 3. Notification to Plumber
-    template_name = os.getenv("CONTACT_CUSTOMER_TEMPLATE_NAME", "contact_customer")
     notification_sent = False
     try:
         # If we have bytes but no URL (Customer App), upload it temporarily for Twilio
@@ -151,38 +150,40 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
             temp_url = await upload_to_tmp(image_bytes)
         
         target_media_url = media_url or temp_url
+        
+        # Select emoji based on urgency
+        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "✅"
+        full_summary = f"{urgency_emoji} NEW INCIDENT [{urgency}]: {summary}\nCustomer: {customer_phone}"
 
-        # If we have a media URL, we send it first
         if target_media_url:
+            # Send ONE message with Image + Caption
             await send_whatsapp_message(
                 to=target_plumber,
                 payload_type="image",
-                content={"link": target_media_url, "caption": f"Incident Photo from {customer_phone}"},
+                content={"link": target_media_url, "caption": full_summary},
                 sender_override=sender_override
             )
-        
-        # Then send the Template with the Call button
-        template_payload = {
-            "template": {
-                "name": template_name,
-                "language": {"code": "en_US"},
-                "components": [
-                    {
-                        "type": "button",
-                        "sub_type": "url", # Or "phone" depending on your Meta setup
-                        "index": "0",
-                        "parameters": [{"type": "text", "text": customer_phone}]
+        else:
+            # Send ONE text message
+            await send_whatsapp_message(
+                to=target_plumber,
+                payload_type="text" if twilio_client else "template",
+                content={"body": full_summary} if twilio_client else {
+                    "template": {
+                        "name": os.getenv("CONTACT_CUSTOMER_TEMPLATE_NAME", "contact_customer"),
+                        "language": {"code": "en_US"},
+                        "components": [
+                            {
+                                "type": "button",
+                                "sub_type": "url",
+                                "index": "0",
+                                "parameters": [{"type": "text", "text": customer_phone}]
+                            }
+                        ]
                     }
-                ]
-            }
-        }
-        
-        await send_whatsapp_message(
-            to=target_plumber,
-            payload_type="template" if not twilio_client else "text",
-            content=template_payload if not twilio_client else {"body": f"🚨 NEW INCIDENT: {summary}\nCustomer: {customer_phone}"},
-            sender_override=sender_override
-        )
+                },
+                sender_override=sender_override
+            )
         notification_sent = True
     except Exception as e:
         print(f"Failed to notify plumber: {e}")
