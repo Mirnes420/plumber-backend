@@ -83,7 +83,7 @@ with tab1:
                     st.write(f"**Customer:** {row['customer_phone']}")
                     st.write(f"**Time:** {row['timestamp']}")
                     st.write(f"**Message:** {row['raw_message']}")
-                    if row['image_url']:
+                    if pd.notna(row['image_url']) and isinstance(row['image_url'], str) and row['image_url'].strip():
                         st.image(row['image_url'], caption="Attached Media", width=300)
                 
                 with c2:

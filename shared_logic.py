@@ -141,6 +141,7 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     )
 
     # 3. Notification to Plumber
+    template_name = os.getenv("CONTACT_CUSTOMER_TEMPLATE_NAME", "contact_customer")
     notification_sent = False
     try:
         # If we have bytes but no URL (Customer App), upload it temporarily for Twilio
