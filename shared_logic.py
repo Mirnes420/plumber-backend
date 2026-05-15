@@ -26,10 +26,20 @@ META_API_URL = f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages"
 def ensure_whatsapp_prefix(number: str) -> str:
     if not number:
         return number
-    number = str(number).strip()
-    if not number.startswith("whatsapp:"):
+    
+    # URL decoding often turns '+' into ' ', so we restore it
+    number = str(number).strip().replace(" ", "+")
+    
+    if ":" in number:
+        prefix, phone = number.split(":", 1)
+        phone = phone.strip()
+        if not phone.startswith("+"):
+            phone = f"+{phone}"
+        return f"whatsapp:{phone}"
+    else:
+        if not number.startswith("+"):
+            number = f"+{number}"
         return f"whatsapp:{number}"
-    return number
 
 async def send_whatsapp_message(to: str, payload_type: str = "text", content: dict = None, sender_override: str = None):
     """
