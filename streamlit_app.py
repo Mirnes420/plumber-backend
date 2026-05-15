@@ -159,4 +159,4 @@ with tab2:
 
 if st.button("Refresh Dashboard"):
     st.rerun()
-        st.rerun()
+        
