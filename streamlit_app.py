@@ -31,9 +31,9 @@ st.set_page_config(page_title="Plumbing Triage Admin", page_icon="🚰", layout=
 st.title("🚰 Plumbing Emergency Dashboard")
     
 # Initialize session state for AI Simulator results
-    if 'sim_result' not in st.session_state:
-        st.session_state.sim_result = None
-        st.session_state.sim_data = {}
+if 'sim_result' not in st.session_state:
+    st.session_state.sim_result = None
+    st.session_state.sim_data = {}
 
     tab1, tab2 = st.tabs(["📊 Incident Log", "🧪 AI Simulator"])
 
