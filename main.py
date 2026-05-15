@@ -19,8 +19,6 @@ TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER") # e.g., whatsapp:+1415523888
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER") # The plumber's real number
 
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN)
-file_urgency_template_id = os.getenv("FILE_URGENCY_TEMPLATE_ID")
-contact_customer_template_id = os.getenv("CONTACT_CUSTOMER_TEMPLATE_ID")
 
 @app.get("/")
 async def root():
@@ -36,74 +34,89 @@ async def whatsapp_webhook(request: Request):
     twiml_resp = MessagingResponse()
 
     # Handle Commands (Filtering in WhatsApp Chat)
-    body_lower = body_raw.lower()
-    if body_lower in ["urgent", "not_urgent", "all_tasks"]:
+    if body_upper in ["URGENT", "NOT_URGENT", "ALL_TASKS"]:
         from database import get_incidents
         incidents = get_incidents()
 
-        if body_lower == "urgent":
+        if body_upper == "URGENT":
             filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
             title = "*🚨 Recent Urgent Tasks*"
-        elif body_lower == "not_urgent":
+        elif body_upper == "NOT_URGENT":
             filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
             title = "*✅ Non-Urgent Tasks*"
-        else:  # all_tasks
+        else:  # ALL_TASKS
             filtered = incidents[:5]
             title = "*📋 All Recent Tasks*"
-        
-        # ... (rest of filtering logic)
+
         if not filtered:
             msg_text = f"{title}\nNo tasks found."
         else:
             msg_text = f"{title}\n\n"
             for i in filtered:
+                time_str = (
+                    i['timestamp'].strftime("%H:%M")
+                    if hasattr(i['timestamp'], 'strftime')
+                    else str(i['timestamp'])[:5]
+                )
                 msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
 
-        # Send interactive message using Template ID if available
+        # Build interactive Quick Reply buttons
+        interactive_data = {
+            "type": "button",
+            "body": {"text": msg_text},
+            "action": {
+                "buttons": [
+                    {"type": "reply", "reply": {"id": "URGENT", "title": "Urgent"}},
+                    {"type": "reply", "reply": {"id": "NOT_URGENT", "title": "Not Urgent"}},
+                    {"type": "reply", "reply": {"id": "ALL_TASKS", "title": "All Tasks"}}
+                ]
+            }
+        }
+
+        # Send interactive message with dynamic variables
         payload = {
             "from_": TWILIO_NUMBER,
             "to": customer_phone,
+            "interactive": interactive_data,
+            "content_variables": json.dumps({
+                "customer_phone": customer_phone
+            })
         }
-        
-        if file_urgency_template_id:
-            payload["content_sid"] = file_urgency_template_id.strip()
-            # Pass variable if template body has {{1}}
-            payload["content_variables"] = json.dumps({"1": msg_text})
-        else:
-            # Fallback to manual interactive buttons
-            payload["body"] = msg_text
-            payload["persistent_action"] = [json.dumps(interactive_data)]
 
         twilio_client.messages.create(**payload)
+
         return Response(status_code=200)
 
     # 2. Handle New Incidents
     incoming_media = form_data.get("MediaUrl0")
+    sender_override = form_data.get("FromNumber")
+    plumber_override = form_data.get("PlumberNumber")
+    image_file = form_data.get("MediaFile")
+    
+    image_bytes = None
+    if image_file:
+        try:
+            image_bytes = await image_file.read()
+        except Exception as e:
+            print(f"Error reading uploaded file: {e}")
+
     from shared_logic import process_incoming_incident
-    triage_result, _ = await process_incoming_incident(customer_phone, body_raw, incoming_media)
+    triage_result, _ = await process_incoming_incident(
+        customer_phone, body_raw, incoming_media, 
+        sender_override=sender_override,
+        plumber_override=plumber_override,
+        image_bytes=image_bytes
+    )
     
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "")
 
-    # Notify Plumber with the "Call Customer" template (NOT the customer)
-    if contact_customer_template_id:
-        twilio_client.messages.create(
-            from_=TWILIO_NUMBER,
-            to=PLUMBER_NUMBER, # Notification for the plumber
-            content_sid=contact_customer_template_id.strip(),
-            content_variables=json.dumps({
-                "customer_phone": customer_phone.replace("whatsapp:", "")
-            })
-        )
-    
-    # Acknowledge the Customer
-    twiml_resp = MessagingResponse()
     msg = twiml_resp.message()
     if urgency == "HIGH":
-        msg.body(f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority. A plumber is being paged.")
+        msg.body(f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now.")
     else:
-        msg.body(f"✅ *Request Received*\n\nSummary: {summary}\n\nLogged. We will contact you shortly.")
-    
+        msg.body(f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly.")
+
     return Response(content=str(twiml_resp), media_type="application/xml")
 
 if __name__ == "__main__":

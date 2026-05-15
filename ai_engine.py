@@ -40,14 +40,20 @@ You MUST respond with a valid JSON object only:
 }
 """
 
-async def analyze_triage(text: str, image_url: str = None):
+async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None):
     """
     Analyzes text and optionally an image using a tiered fallback system.
     """
     contents = [f"Customer Message: {text}"]
     
-    # 1. Fetch image if provided
-    if image_url:
+    # 1. Handle image (either bytes or URL)
+    if image_bytes:
+        image_part = types.Part.from_bytes(
+            data=image_bytes,
+            mime_type="image/jpeg"
+        )
+        contents.append(image_part)
+    elif image_url:
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
             async with httpx.AsyncClient(follow_redirects=True, headers=headers) as client_httpx:

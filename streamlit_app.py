@@ -28,32 +28,9 @@ if "fastapi_started" not in st.session_state:
 
 st.set_page_config(page_title="Plumbing Triage Admin", page_icon="🚰", layout="wide")
 
-# Simple Authentication
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-
-def check_password():
-    """Returns True if the user had the correct password."""
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
+st.title("🚰 Plumbing Emergency Dashboard")
     
-    if st.session_state["authenticated"]:
-        return True
-
-    with st.form("Login"):
-        password = st.text_input("Admin Password", type="password")
-        submit = st.form_submit_button("Login")
-        if submit:
-            if password == ADMIN_PASSWORD:
-                st.session_state["authenticated"] = True
-                st.rerun()
-            else:
-                st.error("Invalid password")
-    return False
-
-if check_password():
-    st.title("🚰 Plumbing Emergency Dashboard")
-    
-    # Initialize session state for AI Simulator results
+# Initialize session state for AI Simulator results
     if 'sim_result' not in st.session_state:
         st.session_state.sim_result = None
         st.session_state.sim_data = {}
@@ -66,7 +43,9 @@ if check_password():
         # URL-based filtering logic
         query_params = st.query_params
         default_urgency = query_params.get("urgency", "HIGH") # Default to HIGH as requested
+        plumber_number_override = query_params.get("plumber_number")
         if isinstance(default_urgency, list): default_urgency = default_urgency[0]
+        if isinstance(plumber_number_override, list): plumber_number_override = plumber_number_override[0]
         
         # Fetch data
         incidents = get_incidents()
@@ -144,7 +123,12 @@ if check_password():
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                         result, notified = loop.run_until_complete(
-                            process_incoming_incident(sim_phone, sim_msg, sim_image)
+                            process_incoming_incident(
+                                sim_phone, 
+                                sim_msg, 
+                                sim_image, 
+                                plumber_override=plumber_number_override
+                            )
                         )
                         
                         # Save to session state to persist after form submission
