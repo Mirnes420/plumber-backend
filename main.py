@@ -25,10 +25,21 @@ async def root():
     return {"status": "running", "service": "Plumbing Triage Bot"}
 
 @app.post("/webhook")
+@app.post("/webhook/") # Support both
 async def whatsapp_webhook(request: Request):
+    print(f"DEBUG: Webhook received! Method: {request.method}, URL: {request.url}")
     form_data = await request.form()
     customer_phone = form_data.get("From")
     body_raw = form_data.get("Body", "").strip()
+    
+    if not customer_phone:
+        print("DEBUG: No 'From' field in form data!")
+        # Try to see if it's JSON
+        try:
+            json_data = await request.json()
+            print(f"DEBUG: Received JSON instead: {json_data}")
+        except:
+            pass
     body_upper = body_raw.upper()
 
     twiml_resp = MessagingResponse()

@@ -23,29 +23,40 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
 
 META_API_URL = f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages"
 
+def ensure_whatsapp_prefix(number: str) -> str:
+    if not number:
+        return number
+    number = str(number).strip()
+    if not number.startswith("whatsapp:"):
+        return f"whatsapp:{number}"
+    return number
+
 async def send_whatsapp_message(to: str, payload_type: str = "text", content: dict = None, sender_override: str = None):
     """
     Helper to send messages via Twilio (Priority) or Meta Cloud API.
     """
-    from_number = sender_override or TWILIO_NUMBER
+    from_number = ensure_whatsapp_prefix(sender_override or TWILIO_NUMBER)
+    to_number = ensure_whatsapp_prefix(to)
+    
+    print(f"Attempting to send WhatsApp to {to_number} from {from_number} via {'Twilio' if twilio_client else 'Meta'}")
     
     # Try Twilio first if configured
     if twilio_client:
         try:
             if payload_type == "text":
-                twilio_client.messages.create(
+                res = twilio_client.messages.create(
                     body=content.get("body", ""),
                     from_=from_number,
-                    to=to
+                    to=to_number
                 )
             elif payload_type == "image":
-                twilio_client.messages.create(
+                res = twilio_client.messages.create(
                     body=content.get("caption", ""),
                     from_=from_number,
                     media_url=[content.get("link", "")] if content.get("link") else None,
-                    to=to
+                    to=to_number
                 )
-            # Add other types as needed
+            print(f"Twilio Send Success: {res.sid}")
             return True
         except Exception as e:
             print(f"Twilio Send Error: {e}")
@@ -86,6 +97,7 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     """
     Core logic to handle an incoming plumbing request.
     """
+    print(f"Processing incident from {customer_phone} for plumber {plumber_override or 'DEFAULT'}")
     target_plumber = plumber_override or PLUMBER_NUMBER
     
     # 1. AI Triage
