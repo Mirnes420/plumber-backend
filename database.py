@@ -33,6 +33,15 @@ class Incident(Base):
     status = Column(String, default="PENDING")
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
+class Plumber(Base):
+    __tablename__ = "plumbers"
+
+    id = Column(String, primary_key=True) # Can be '1', '2' or a slug
+    name = Column(String)
+    plumber_phone = Column(String)
+    dispatcher_phone = Column(String)
+    active = Column(Boolean, default=True)
+
 # Create table if it doesn't exist
 Base.metadata.create_all(bind=engine)
 
@@ -99,5 +108,20 @@ def update_incident_status(incident_id: str, status: str):
         print(f"Error updating status: {e}")
         db.rollback()
         return False
+    finally:
+        db.close()
+
+def get_plumber_by_id(plumber_id: str):
+    """Fetches plumber details from DB by ID."""
+    if not plumber_id:
+        return None
+    db = SessionLocal()
+    try:
+        from database import Plumber
+        # Cast to string to handle both int and string IDs
+        return db.query(Plumber).filter(Plumber.id == str(plumber_id), Plumber.active == True).first()
+    except Exception as e:
+        print(f"Error fetching plumber {plumber_id}: {e}")
+        return None
     finally:
         db.close()

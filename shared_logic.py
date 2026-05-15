@@ -123,7 +123,22 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     Core logic to handle an incoming plumbing request.
     """
     print(f"Processing incident from {customer_phone} for plumber {plumber_override or 'DEFAULT'}")
-    target_plumber = plumber_override or PLUMBER_NUMBER
+    
+    # 0. Plumber Lookup
+    target_plumber = PLUMBER_NUMBER
+    if plumber_override:
+        # If it's already a phone number, use it
+        if str(plumber_override).startswith("+") or str(plumber_override).startswith("whatsapp:"):
+            target_plumber = plumber_override
+        else:
+            # Otherwise, lookup by ID/Slug in DB
+            from database import get_plumber_by_id
+            plumber_obj = get_plumber_by_id(plumber_override)
+            if plumber_obj:
+                target_plumber = plumber_obj.plumber_phone
+                print(f"📍 Routed to Plumber: {plumber_obj.name} ({target_plumber})")
+            else:
+                print(f"⚠️ Plumber ID '{plumber_override}' not found. Using default.")
     
     # 1. AI Triage
     triage_result = await analyze_triage(body, media_url, image_bytes)
