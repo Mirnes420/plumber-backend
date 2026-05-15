@@ -23,6 +23,21 @@ WHATSAPP_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
 
 META_API_URL = f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages"
 
+async def upload_to_tmp(image_bytes: bytes) -> str:
+    """Uploads bytes to a temporary public URL so Twilio can fetch it."""
+    try:
+        async with httpx.AsyncClient() as client:
+            files = {'file': ('incident.jpg', image_bytes, 'image/jpeg')}
+            response = await client.post("https://tmpfiles.org/api/v1/upload", files=files)
+            if response.status_code == 200:
+                data = response.json()
+                url = data['data']['url']
+                # Convert view URL to download URL for Twilio
+                return url.replace("https://tmpfiles.org/", "https://tmpfiles.org/dl/")
+    except Exception as e:
+        print(f"Temporary upload failed: {e}")
+    return None
+
 def ensure_whatsapp_prefix(number: str) -> str:
     if not number:
         return number
@@ -125,17 +140,23 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         image_url=media_url
     )
 
-    # 3. Notification to Plumber (Using Meta Template)
-    template_name = os.getenv("CONTACT_CUSTOMER_TEMPLATE_NAME", "contact_customer")
-    
+    # 3. Notification to Plumber
     notification_sent = False
     try:
-        # If we have an image, we send it first
-        if media_url:
+        # If we have bytes but no URL (Customer App), upload it temporarily for Twilio
+        temp_url = None
+        if image_bytes and not media_url:
+            print("Uploading local image for WhatsApp notification...")
+            temp_url = await upload_to_tmp(image_bytes)
+        
+        target_media_url = media_url or temp_url
+
+        # If we have a media URL, we send it first
+        if target_media_url:
             await send_whatsapp_message(
                 to=target_plumber,
                 payload_type="image",
-                content={"link": media_url, "caption": f"Incident Photo from {customer_phone}"},
+                content={"link": target_media_url, "caption": f"Incident Photo from {customer_phone}"},
                 sender_override=sender_override
             )
         

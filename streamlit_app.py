@@ -35,127 +35,128 @@ if 'sim_result' not in st.session_state:
     st.session_state.sim_result = None
     st.session_state.sim_data = {}
 
-    tab1, tab2 = st.tabs(["📊 Incident Log", "🧪 AI Simulator"])
+tab1, tab2 = st.tabs(["📊 Incident Log", "🧪 AI Simulator"])
 
-    with tab1:
-        st.markdown("Monitor and manage incoming WhatsApp triage requests.")
+with tab1:
+    st.markdown("Monitor and manage incoming WhatsApp triage requests.")
+    
+    # URL-based filtering logic
+    query_params = st.query_params
+    default_urgency = query_params.get("urgency", "HIGH") # Default to HIGH as requested
+    plumber_number_override = query_params.get("plumber_number")
+    if isinstance(default_urgency, list): default_urgency = default_urgency[0]
+    if isinstance(plumber_number_override, list): plumber_number_override = plumber_number_override[0]
+    
+    # Fetch data
+    incidents = get_incidents()
+    
+    if not incidents:
+        st.info("No incidents logged yet.")
+    else:
+        df = pd.DataFrame(incidents)
         
-        # URL-based filtering logic
-        query_params = st.query_params
-        default_urgency = query_params.get("urgency", "HIGH") # Default to HIGH as requested
-        plumber_number_override = query_params.get("plumber_number")
-        if isinstance(default_urgency, list): default_urgency = default_urgency[0]
-        if isinstance(plumber_number_override, list): plumber_number_override = plumber_number_override[0]
+        st.sidebar.header("Filters")
         
-        # Fetch data
-        incidents = get_incidents()
+        # Select filters based on query params or default
+        available_urgencies = ["HIGH", "MEDIUM", "LOW"]
+        selected_urgencies = st.sidebar.multiselect(
+            "Urgency", 
+            options=available_urgencies, 
+            default=[default_urgency] if default_urgency in available_urgencies else available_urgencies
+        )
         
-        if not incidents:
-            st.info("No incidents logged yet.")
-        else:
-            df = pd.DataFrame(incidents)
-            
-            st.sidebar.header("Filters")
-            
-            # Select filters based on query params or default
-            available_urgencies = ["HIGH", "MEDIUM", "LOW"]
-            selected_urgencies = st.sidebar.multiselect(
-                "Urgency", 
-                options=available_urgencies, 
-                default=[default_urgency] if default_urgency in available_urgencies else available_urgencies
-            )
-            
-            status_filter = st.sidebar.multiselect("Status", options=["PENDING", "RESOLVED"], default=["PENDING", "RESOLVED"])
-            
-            filtered_df = df[df['urgency'].isin(selected_urgencies) & df['status'].isin(status_filter)]
-
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Incidents", len(df))
-            col2.metric("High Urgency", len(df[df['urgency'] == "HIGH"]))
-            col3.metric("Pending", len(df[df['status'] == "PENDING"]))
-
-            st.subheader("Recent Incidents")
-            
-            for idx, row in filtered_df.iterrows():
-                with st.expander(f"[{row['urgency']}] {row['summary']} - {row['customer_phone']}"):
-                    c1, c2 = st.columns([2, 1])
-                    with c1:
-                        st.write(f"**Customer:** {row['customer_phone']}")
-                        st.write(f"**Time:** {row['timestamp']}")
-                        st.write(f"**Message:** {row['raw_message']}")
-                        if row['image_url']:
-                            st.image(row['image_url'], caption="Attached Media", width=300)
-                    
-                    with c2:
-                        st.write(f"**Current Status:** {row['status']}")
-                        if row['status'] == "PENDING":
-                            if st.button("Mark as RESOLVED", key=f"res_{row['id']}"):
-                                update_incident_status(row['id'], "RESOLVED")
-                                st.success("Updated!")
-                                st.rerun()
-                        else:
-                            if st.button("Mark as PENDING", key=f"pen_{row['id']}"):
-                                update_incident_status(row['id'], "PENDING")
-                                st.success("Updated!")
-                                st.rerun()
-
-            if st.checkbox("Show Raw Data"):
-                st.dataframe(filtered_df)
-
-    with tab2:
-        st.header("🧪 AI Triage Simulator")
-        st.write("Test the AI analysis logic by simulating a message from a customer.")
+        status_filter = st.sidebar.multiselect("Status", options=["PENDING", "RESOLVED"], default=["PENDING", "RESOLVED"])
         
-        with st.form("simulator_form"):
-            sim_phone = st.text_input("Customer Phone (Simulated)", value="+123456789")
-            sim_msg = st.text_area("Customer Message", placeholder="e.g. Help! My kitchen is flooding from a burst pipe!")
-            sim_image = st.text_input("Image URL (Optional)", placeholder="https://example.com/leak.jpg")
-            
-            submitted = st.form_submit_button("Run Triage Analysis")
-            
-            if submitted:
-                if not sim_msg:
-                    st.error("Please enter a message.")
-                else:
-                    with st.spinner("AI is analyzing..."):
-                        # Execute shared logic (AI + DB + Notification)
-                        from shared_logic import process_incoming_incident
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        result, notified = loop.run_until_complete(
-                            process_incoming_incident(
-                                sim_phone, 
-                                sim_msg, 
-                                sim_image, 
-                                plumber_override=plumber_number_override
-                            )
-                        )
-                        
-                        # Save to session state to persist after form submission
-                        st.session_state.sim_result = result
-                        st.session_state.sim_notified = notified
-                        st.session_state.sim_data = {
-                            "phone": sim_phone,
-                            "msg": sim_msg,
-                            "img": sim_image
-                        }
-                        st.success("Analysis complete and logged to database!")
+        filtered_df = df[df['urgency'].isin(selected_urgencies) & df['status'].isin(status_filter)]
 
-        # Display results outside the form
-        if st.session_state.sim_result:
-            st.divider()
-            st.subheader("Analysis Result")
-            st.json(st.session_state.sim_result)
-            
-            if st.session_state.sim_notified:
-                st.warning("🚨 EMERGENCY: A notification has been sent to the Plumber via WhatsApp!")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Incidents", len(df))
+        col2.metric("High Urgency", len(df[df['urgency'] == "HIGH"]))
+        col3.metric("Pending", len(df[df['status'] == "PENDING"]))
+
+        st.subheader("Recent Incidents")
+        
+        for idx, row in filtered_df.iterrows():
+            with st.expander(f"[{row['urgency']}] {row['summary']} - {row['customer_phone']}"):
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    st.write(f"**Customer:** {row['customer_phone']}")
+                    st.write(f"**Time:** {row['timestamp']}")
+                    st.write(f"**Message:** {row['raw_message']}")
+                    if row['image_url']:
+                        st.image(row['image_url'], caption="Attached Media", width=300)
+                
+                with c2:
+                    st.write(f"**Current Status:** {row['status']}")
+                    if row['status'] == "PENDING":
+                        if st.button("Mark as RESOLVED", key=f"res_{row['id']}"):
+                            update_incident_status(row['id'], "RESOLVED")
+                            st.success("Updated!")
+                            st.rerun()
+                    else:
+                        if st.button("Mark as PENDING", key=f"pen_{row['id']}"):
+                            update_incident_status(row['id'], "PENDING")
+                            st.success("Updated!")
+                            st.rerun()
+
+        if st.checkbox("Show Raw Data"):
+            st.dataframe(filtered_df)
+
+with tab2:
+    st.header("🧪 AI Triage Simulator")
+    st.write("Test the AI analysis logic by simulating a message from a customer.")
+    
+    with st.form("simulator_form"):
+        sim_phone = st.text_input("Customer Phone (Simulated)", value="+123456789")
+        sim_msg = st.text_area("Customer Message", placeholder="e.g. Help! My kitchen is flooding from a burst pipe!")
+        sim_image = st.text_input("Image URL (Optional)", placeholder="https://example.com/leak.jpg")
+        
+        submitted = st.form_submit_button("Run Triage Analysis")
+        
+        if submitted:
+            if not sim_msg:
+                st.error("Please enter a message.")
             else:
-                st.info("Status: Logged and processed. No emergency alert sent.")
-            
-            if st.button("Clear Simulation Result", use_container_width=True):
-                st.session_state.sim_result = None
-                st.session_state.sim_notified = False
-                st.rerun()
+                with st.spinner("AI is analyzing..."):
+                    # Execute shared logic (AI + DB + Notification)
+                    from shared_logic import process_incoming_incident
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    result, notified = loop.run_until_complete(
+                        process_incoming_incident(
+                            sim_phone, 
+                            sim_msg, 
+                            sim_image, 
+                            plumber_override=plumber_number_override
+                        )
+                    )
+                    
+                    # Save to session state to persist after form submission
+                    st.session_state.sim_result = result
+                    st.session_state.sim_notified = notified
+                    st.session_state.sim_data = {
+                        "phone": sim_phone,
+                        "msg": sim_msg,
+                        "img": sim_image
+                    }
+                    st.success("Analysis complete and logged to database!")
 
-    if st.button("Refresh Dashboard"):
+    # Display results outside the form
+    if st.session_state.sim_result:
+        st.divider()
+        st.subheader("Analysis Result")
+        st.json(st.session_state.sim_result)
+        
+        if st.session_state.sim_notified:
+            st.warning("🚨 EMERGENCY: A notification has been sent to the Plumber via WhatsApp!")
+        else:
+            st.info("Status: Logged and processed. No emergency alert sent.")
+        
+        if st.button("Clear Simulation Result", use_container_width=True):
+            st.session_state.sim_result = None
+            st.session_state.sim_notified = False
+            st.rerun()
+
+if st.button("Refresh Dashboard"):
+    st.rerun()
         st.rerun()
