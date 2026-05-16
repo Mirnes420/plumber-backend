@@ -1,5 +1,4 @@
 import os
-from twilio.rest import Client as TwilioClient
 from ai_engine import analyze_triage
 from database import log_incident
 from dotenv import load_dotenv
@@ -9,20 +8,9 @@ load_dotenv()
 import json
 import httpx
 
-# Twilio Config
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
-MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
+# WBOT Config
+WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
-
-twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN) if TWILIO_SID else None
-
-# Meta Config
-WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
-
-META_API_URL = f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages"
 
 async def upload_to_tmp(image_bytes: bytes) -> str:
     """Uploads bytes to a temporary public URL so Twilio can fetch it."""
@@ -39,115 +27,55 @@ async def upload_to_tmp(image_bytes: bytes) -> str:
         print(f"Temporary upload failed: {e}")
     return None
 
-def ensure_whatsapp_prefix(number: str) -> str:
+def clean_whatsapp_number(number: str) -> str:
     if not number:
         return number
-    
-    # URL decoding often turns '+' into ' ', so we restore it
-    number = str(number).strip().replace(" ", "+")
-    
-    if ":" in number:
-        prefix, phone = number.split(":", 1)
-        phone = phone.strip()
-        if not phone.startswith("+"):
-            phone = f"+{phone}"
-        return f"whatsapp:{phone}"
-    else:
-        if not number.startswith("+"):
-            number = f"+{number}"
-        return f"whatsapp:{number}"
+    # Remove prefix formatting
+    number = str(number).strip()
+    number = number.replace("whatsapp:", "").replace("+", "").replace(" ", "").replace("-", "")
+    return number
 
 async def send_whatsapp_message(to: str, payload_type: str = "text", content: dict = None, sender_override: str = None):
     """
-    Helper to send messages via Twilio (Priority) or Meta Cloud API.
+    Helper to send messages via local wbot API.
     """
-    from_number = ensure_whatsapp_prefix(sender_override or TWILIO_NUMBER)
-    to_number = ensure_whatsapp_prefix(to)
+    to_number = clean_whatsapp_number(to)
     
-    print(f"Attempting to send WhatsApp to {to_number} from {from_number} via {'Twilio' if twilio_client else 'Meta'}")
+    print(f"Attempting to send WhatsApp to {to_number} via wbot API")
     
-    # Try Twilio first if configured
-    if twilio_client:
-        try:
-            if payload_type == "text":
-                if MESSAGING_SERVICE_SID:
-                    res = twilio_client.messages.create(
-                        body=content.get("body", ""),
-                        messaging_service_sid=MESSAGING_SERVICE_SID,
-                        to=to_number
-                    )
-                else:
-                    res = twilio_client.messages.create(
-                        body=content.get("body", ""),
-                        from_=from_number,
-                        to=to_number
-                    )
-            elif payload_type == "image":
-                if MESSAGING_SERVICE_SID:
-                    res = twilio_client.messages.create(
-                        body=content.get("caption", ""),
-                        messaging_service_sid=MESSAGING_SERVICE_SID,
-                        media_url=[content.get("link", "")] if content.get("link") else None,
-                        to=to_number
-                    )
-                else:
-                    res = twilio_client.messages.create(
-                        body=content.get("caption", ""),
-                        from_=from_number,
-                        media_url=[content.get("link", "")] if content.get("link") else None,
-                        to=to_number
-                    )
-            elif payload_type == "template":
-                # Twilio Content Template API
-                params = {
-                    "to": to_number,
-                    "content_sid": content.get("template", {}).get("name"), # We'll map 'name' to sid for compatibility
-                    "content_variables": json.dumps(content.get("template", {}).get("variables", {}))
-                }
-                if MESSAGING_SERVICE_SID:
-                    params["messaging_service_sid"] = MESSAGING_SERVICE_SID
-                else:
-                    params["from_"] = from_number
-                
-                res = twilio_client.messages.create(**params)
-                print(f"Twilio Template Sent: {res.sid}")
-                return True
-            print(f"Twilio Message Sent (via Service: {MESSAGING_SERVICE_SID or from_number}): {res.sid}")
-            return True
-        except Exception as e:
-            print(f"Twilio Send Error: {e}")
-
-    # Fallback to Meta if Twilio fails or isn't configured
-    if not WHATSAPP_PHONE_ID:
-        return None
-
     headers = {
-        "Authorization": f"Bearer {WHATSAPP_TOKEN}",
         "Content-Type": "application/json"
     }
     
-    data = {
-        "messaging_product": "whatsapp",
-        "to": to,
-        "type": payload_type,
-    }
-    
-    if payload_type == "text":
-        data["text"] = {"body": content.get("body", "")}
-    elif payload_type == "template":
-        data["template"] = content.get("template", {})
-    elif payload_type == "interactive":
-        data["interactive"] = content.get("interactive", {})
-    elif payload_type == "image":
-        data["image"] = {"link": content.get("link", "")}
-        if content.get("caption"):
-            data["image"]["caption"] = content.get("caption")
+    try:
+        async with httpx.AsyncClient() as client:
+            data = {"number": to_number}
+            
+            if payload_type == "text":
+                data["text"] = content.get("body", "")
+            elif payload_type == "image":
+                data["imageUrl"] = content.get("link", "")
+                data["caption"] = content.get("caption", "")
+            elif payload_type == "template":
+                data["text"] = content.get("body", f"Plumbing Emergency Alert for {to_number}")
+            elif payload_type == "buttons":
+                data["text"] = content.get("body", "")
+                data["buttons"] = content.get("buttons", [])
+            else:
+                return False
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(META_API_URL, headers=headers, json=data)
-        if response.status_code not in [200, 201]:
-            print(f"Meta API Error: {response.status_code} - {response.text}")
-        return response
+            response = await client.post(f"{WBOT_API_URL}/send", headers=headers, json=data)
+
+            if response.status_code in [200, 201]:
+                print(f"wbot Send Success: {response.status_code}")
+                return True
+            else:
+                print(f"wbot API Error: {response.status_code} - {response.text}")
+                return False
+                
+    except Exception as e:
+        print(f"wbot Send Error: {e}")
+        return False
 
 async def process_incoming_incident(customer_phone: str, body: str, media_url: str = None, sender_override: str = None, image_bytes: bytes = None, plumber_override: str = None):
     """

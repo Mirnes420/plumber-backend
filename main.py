@@ -1,24 +1,20 @@
 import os
-from fastapi import FastAPI, Request, Response, HTTPException
-from twilio.rest import Client as TwilioClient
-from twilio.twiml.messaging_response import MessagingResponse
-from twilio.request_validator import RequestValidator
+from fastapi import FastAPI, Request, Response, HTTPException, Form, UploadFile, File
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 import json
 from ai_engine import analyze_triage
 from database import log_incident
 
+from shared_logic import send_whatsapp_message, process_incoming_incident
+
 load_dotenv()
 
 app = FastAPI(title="WhatsApp Emergency Triage Bot")
 
-# Twilio Config
-TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER") # e.g., whatsapp:+14155238886
-PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER") # The plumber's real number
-
-twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN)
+# WBOT Config
+WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
+PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 
 @app.get("/")
 async def root():
@@ -33,29 +29,36 @@ async def whatsapp_webhook(request: Request):
     body_raw = form_data.get("Body", "").strip()
     
     if not customer_phone:
-        print("DEBUG: No 'From' field in form data!")
-        # Try to see if it's JSON
         try:
             json_data = await request.json()
-            print(f"DEBUG: Received JSON instead: {json_data}")
+            customer_phone = json_data.get("From")
+            body_raw = json_data.get("Body", "").strip()
         except:
             pass
-    body_upper = body_raw.upper()
-
-    twiml_resp = MessagingResponse()
+            
+    if not customer_phone:
+        return JSONResponse({"status": "error", "message": "No sender phone found"})
+        
+    body_upper = body_raw.upper().replace(" ", "_").strip()
+    print(f"📥 Received from {customer_phone}: {body_upper}")
 
     # Handle Commands (Filtering in WhatsApp Chat)
-    if body_upper in ["URGENT", "NOT_URGENT", "ALL_TASKS"]:
+    filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
+    
+    if body_upper in filter_keywords:
         from database import get_incidents
         incidents = get_incidents()
 
-        if body_upper == "URGENT":
+        if body_upper in ["URGENT", "EMERGENCY"]:
+            print("🚨 Routing to High-Priority Alert Pipeline")
             filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
             title = "*🚨 Recent Urgent Tasks*"
-        elif body_upper == "NOT_URGENT":
+        elif body_upper in ["NOT_URGENT", "NON_EMERGENCY", "NO_EMERGENCY"]:
+            print("✅ Routing to Standard Log Archive")
             filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
             title = "*✅ Non-Urgent Tasks*"
-        else:  # ALL_TASKS
+        else:  # ALL_TASKS, FILTER, MID, ALL
+            print(f"⚡ Routing to Context Filter: {body_upper}")
             filtered = incidents[:5]
             title = "*📋 All Recent Tasks*"
 
@@ -71,34 +74,20 @@ async def whatsapp_webhook(request: Request):
                 )
                 msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
 
-        # Build interactive Quick Reply buttons
-        interactive_data = {
-            "type": "button",
-            "body": {"text": msg_text},
-            "action": {
-                "buttons": [
-                    {"type": "reply", "reply": {"id": "URGENT", "title": "Urgent"}},
-                    {"type": "reply", "reply": {"id": "NOT_URGENT", "title": "Not Urgent"}},
-                    {"type": "reply", "reply": {"id": "ALL_TASKS", "title": "All Tasks"}}
-                ]
+        # Send message with dynamic variables and buttons
+        await send_whatsapp_message(
+            to=customer_phone,
+            payload_type="buttons",
+            content={
+                "body": msg_text,
+                "buttons": ["Emergency", "No Emergency", "All"]
             }
-        }
+        )
 
-        # Send interactive message with dynamic variables
-        payload = {
-            "from_": TWILIO_NUMBER,
-            "to": customer_phone,
-            "interactive": interactive_data,
-            "content_variables": json.dumps({
-                "customer_phone": customer_phone
-            })
-        }
-
-        twilio_client.messages.create(**payload)
-
-        return Response(status_code=200)
+        return JSONResponse({"status": "ok"})
 
     # 2. Handle New Incidents
+    print(f"💬 Standard message or unmapped keyword: {body_upper}. Routing to AI Triage.")
     incoming_media = form_data.get("MediaUrl0")
     sender_override = form_data.get("FromNumber")
     plumber_override = form_data.get("PlumberNumber")
@@ -122,31 +111,55 @@ async def whatsapp_webhook(request: Request):
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "")
 
-    msg = twiml_resp.message()
     if urgency == "HIGH":
-        msg.body(f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now.")
+        reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now."
     else:
-        msg.body(f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly.")
+        reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly."
 
-    return Response(content=str(twiml_resp), media_type="application/xml")
+    await send_whatsapp_message(
+        to=customer_phone,
+        payload_type="text",
+        content={"body": reply_msg}
+    )
 
-@app.post("/status")
-@app.post("/status/")
-async def twilio_status_callback(request: Request):
-    """
-    Handles Twilio's status callbacks (e.g., delivered, read, failed).
-    """
-    form_data = await request.form()
-    message_sid = form_data.get("MessageSid")
-    message_status = form_data.get("MessageStatus")
-    error_code = form_data.get("ErrorCode")
-    to_number = form_data.get("To")
+    return JSONResponse({"status": "ok"})
+
+@app.post("/api/incident")
+async def api_incident(
+    phone: str = Form(...),
+    description: str = Form(...),
+    image: UploadFile = File(None)
+):
+    print(f"🌐 Web Form Submission from {phone}: {description}")
     
-    print(f"📊 Twilio Status Callback: Message {message_sid} to {to_number} is {message_status}")
-    if error_code:
-        print(f"❌ Twilio Delivery Error: {error_code}")
+    image_bytes = None
+    if image and image.filename:
+        image_bytes = await image.read()
         
-    return Response(status_code=200)
+    from shared_logic import process_incoming_incident
+    triage_result, _ = await process_incoming_incident(
+        phone, description, None, 
+        sender_override=None,
+        plumber_override=None,
+        image_bytes=image_bytes
+    )
+    
+    urgency = triage_result.get("urgency", "MEDIUM")
+    summary = triage_result.get("summary", "")
+
+    if urgency == "HIGH":
+        reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe received your web request. We've flagged this as high priority: {summary}\n\nA plumber is being paged now!"
+    else:
+        reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
+
+    # Automatically send the confirmation back to the user on WhatsApp!
+    await send_whatsapp_message(
+        to=phone,
+        payload_type="text",
+        content={"body": reply_msg}
+    )
+
+    return JSONResponse({"status": "success", "urgency": urgency, "summary": summary})
 
 if __name__ == "__main__":
     import uvicorn
