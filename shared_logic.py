@@ -13,6 +13,7 @@ import httpx
 TWILIO_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 TWILIO_NUMBER = os.getenv("TWILIO_WHATSAPP_NUMBER")
+MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
 
 twilio_client = TwilioClient(TWILIO_SID, TWILIO_AUTH_TOKEN) if TWILIO_SID else None
@@ -69,19 +70,34 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
     if twilio_client:
         try:
             if payload_type == "text":
-                res = twilio_client.messages.create(
-                    body=content.get("body", ""),
-                    from_=from_number,
-                    to=to_number
-                )
+                if MESSAGING_SERVICE_SID:
+                    res = twilio_client.messages.create(
+                        body=content.get("body", ""),
+                        messaging_service_sid=MESSAGING_SERVICE_SID,
+                        to=to_number
+                    )
+                else:
+                    res = twilio_client.messages.create(
+                        body=content.get("body", ""),
+                        from_=from_number,
+                        to=to_number
+                    )
             elif payload_type == "image":
-                res = twilio_client.messages.create(
-                    body=content.get("caption", ""),
-                    from_=from_number,
-                    media_url=[content.get("link", "")] if content.get("link") else None,
-                    to=to_number
-                )
-            print(f"Twilio Send Success: {res.sid}")
+                if MESSAGING_SERVICE_SID:
+                    res = twilio_client.messages.create(
+                        body=content.get("caption", ""),
+                        messaging_service_sid=MESSAGING_SERVICE_SID,
+                        media_url=[content.get("link", "")] if content.get("link") else None,
+                        to=to_number
+                    )
+                else:
+                    res = twilio_client.messages.create(
+                        body=content.get("caption", ""),
+                        from_=from_number,
+                        media_url=[content.get("link", "")] if content.get("link") else None,
+                        to=to_number
+                    )
+            print(f"Twilio Message Sent (via Service: {MESSAGING_SERVICE_SID or from_number}): {res.sid}")
             return True
         except Exception as e:
             print(f"Twilio Send Error: {e}")

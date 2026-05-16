@@ -130,6 +130,24 @@ async def whatsapp_webhook(request: Request):
 
     return Response(content=str(twiml_resp), media_type="application/xml")
 
+@app.post("/status")
+@app.post("/status/")
+async def twilio_status_callback(request: Request):
+    """
+    Handles Twilio's status callbacks (e.g., delivered, read, failed).
+    """
+    form_data = await request.form()
+    message_sid = form_data.get("MessageSid")
+    message_status = form_data.get("MessageStatus")
+    error_code = form_data.get("ErrorCode")
+    to_number = form_data.get("To")
+    
+    print(f"📊 Twilio Status Callback: Message {message_sid} to {to_number} is {message_status}")
+    if error_code:
+        print(f"❌ Twilio Delivery Error: {error_code}")
+        
+    return Response(status_code=200)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
