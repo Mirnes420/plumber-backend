@@ -28,17 +28,66 @@ if "fastapi_started" not in st.session_state:
 
 st.set_page_config(page_title="Plumbing Triage Admin", page_icon="🚰", layout="wide")
 
+# Authentication
+if 'logged_in_user' not in st.session_state:
+    st.title("🚰 Plumbing Emergency Dashboard")
+    st.subheader("🔐 Login")
+    with st.container():
+        user_id_input = st.text_input("Enter your ID (Plumber ID or Admin ID)", placeholder="e.g. 1 or admin")
+        if st.button("Access Dashboard", use_container_width=True):
+            # Admin Check
+            if user_id_input.lower() == "admin":
+                st.session_state.logged_in_user = {
+                    "id": "admin",
+                    "name": "Super Admin",
+                    "role": "admin"
+                }
+                st.success("Welcome, Admin!")
+                st.rerun()
+            
+            # Plumber Check
+            from database import get_plumber_by_id
+            plumber = get_plumber_by_id(user_id_input)
+            if plumber:
+                st.session_state.logged_in_user = {
+                    "id": plumber.id,
+                    "name": plumber.name,
+                    "phone": plumber.plumber_phone,
+                    "role": "plumber"
+                }
+                st.success(f"Welcome, {plumber.name}!")
+                st.rerun()
+            else:
+                st.error("Invalid ID. Please try again.")
+    st.stop()
+
+# If logged in, show the dashboard
+user_info = st.session_state.logged_in_user
+is_admin = user_info['role'] == "admin"
+
 st.title("🚰 Plumbing Emergency Dashboard")
+st.sidebar.success(f"👤 Logged in as: {user_info['name']} ({user_info['role'].upper()})")
+if st.sidebar.button("Logout"):
+    del st.session_state.logged_in_user
+    st.rerun()
     
 # Initialize session state for AI Simulator results
 if 'sim_result' not in st.session_state:
     st.session_state.sim_result = None
     st.session_state.sim_data = {}
 
-tab1, tab2 = st.tabs(["📊 Incident Log", "🧪 AI Simulator"])
+# Tabs - Plumbers only get the Log, Admins get both
+tab_names = ["📊 Incident Log"]
+if is_admin:
+    tab_names.append("🧪 AI Simulator")
+
+tabs = st.tabs(tab_names)
+tab1 = tabs[0]
+if is_admin:
+    tab2 = tabs[1]
 
 with tab1:
-    st.markdown("Monitor and manage incoming WhatsApp triage requests.")
+    st.markdown(f"Monitor and manage WhatsApp triage requests for {'everyone' if is_admin else 'your service'}.")
     
     # URL-based filtering logic
     query_params = st.query_params
@@ -48,7 +97,13 @@ with tab1:
     if isinstance(plumber_number_override, list): plumber_number_override = plumber_number_override[0]
     
     # Fetch data
-    incidents = get_incidents()
+    all_incidents = get_incidents()
+    
+    # Filtering based on role
+    if is_admin:
+        incidents = all_incidents
+    else:
+        incidents = [i for i in all_incidents if i['plumber_phone'] == user_info['phone']]
     
     if not incidents:
         st.info("No incidents logged yet.")
@@ -102,60 +157,71 @@ with tab1:
         if st.checkbox("Show Raw Data"):
             st.dataframe(filtered_df)
 
-with tab2:
-    st.header("🧪 AI Triage Simulator")
-    st.write("Test the AI analysis logic by simulating a message from a customer.")
-    
-    with st.form("simulator_form"):
-        sim_phone = st.text_input("Customer Phone (Simulated)", value="+123456789")
-        sim_msg = st.text_area("Customer Message", placeholder="e.g. Help! My kitchen is flooding from a burst pipe!")
-        sim_image = st.text_input("Image URL (Optional)", placeholder="https://example.com/leak.jpg")
+if is_admin:
+    with tab2:
+        st.header("🧪 AI Triage Simulator")
+        st.write("Test the AI analysis logic by simulating a message from a customer.")
         
-        submitted = st.form_submit_button("Run Triage Analysis")
-        
-        if submitted:
-            if not sim_msg:
-                st.error("Please enter a message.")
-            else:
-                with st.spinner("AI is analyzing..."):
-                    # Execute shared logic (AI + DB + Notification)
-                    from shared_logic import process_incoming_incident
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    result, notified = loop.run_until_complete(
-                        process_incoming_incident(
-                            sim_phone, 
-                            sim_msg, 
-                            sim_image, 
-                            plumber_override=plumber_number_override
+        with st.form("simulator_form"):
+            sim_phone = st.text_input("Customer Phone (Simulated)", value="+123456789")
+            sim_msg = st.text_area("Customer Message", placeholder="e.g. Help! My kitchen is flooding from a burst pipe!")
+            sim_image = st.text_input("Image URL (Optional)", placeholder="https://example.com/leak.jpg")
+            
+            # Allow admin to pick which plumber to send to
+            from database import SessionLocal, Plumber
+            db = SessionLocal()
+            all_plumbers = db.query(Plumber).all()
+            db.close()
+            
+            plumber_options = {f"{p.name} ({p.id})": p.id for p in all_plumbers}
+            selected_plumber_name = st.selectbox("Route To Plumber", options=list(plumber_options.keys()))
+            sim_plumber_id = plumber_options[selected_plumber_name]
+            
+            submitted = st.form_submit_button("Run Triage Analysis")
+            
+            if submitted:
+                if not sim_msg:
+                    st.error("Please enter a message.")
+                else:
+                    with st.spinner("AI is analyzing..."):
+                        # Execute shared logic (AI + DB + Notification)
+                        from shared_logic import process_incoming_incident
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        result, notified = loop.run_until_complete(
+                            process_incoming_incident(
+                                sim_phone, 
+                                sim_msg, 
+                                sim_image, 
+                                plumber_override=sim_plumber_id
+                            )
                         )
-                    )
-                    
-                    # Save to session state to persist after form submission
-                    st.session_state.sim_result = result
-                    st.session_state.sim_notified = notified
-                    st.session_state.sim_data = {
-                        "phone": sim_phone,
-                        "msg": sim_msg,
-                        "img": sim_image
-                    }
-                    st.success("Analysis complete and logged to database!")
+                        
+                        # Save to session state to persist after form submission
+                        st.session_state.sim_result = result
+                        st.session_state.sim_notified = notified
+                        st.session_state.sim_data = {
+                            "phone": sim_phone,
+                            "msg": sim_msg,
+                            "img": sim_image
+                        }
+                        st.success("Analysis complete and logged to database!")
 
-    # Display results outside the form
-    if st.session_state.sim_result:
-        st.divider()
-        st.subheader("Analysis Result")
-        st.json(st.session_state.sim_result)
-        
-        if st.session_state.sim_notified:
-            st.warning("🚨 EMERGENCY: A notification has been sent to the Plumber via WhatsApp!")
-        else:
-            st.info("Status: Logged and processed. No emergency alert sent.")
-        
-        if st.button("Clear Simulation Result", use_container_width=True):
-            st.session_state.sim_result = None
-            st.session_state.sim_notified = False
-            st.rerun()
+        # Display results outside the form
+        if st.session_state.sim_result:
+            st.divider()
+            st.subheader("Analysis Result")
+            st.json(st.session_state.sim_result)
+            
+            if st.session_state.sim_notified:
+                st.warning("🚨 EMERGENCY: A notification has been sent to the Plumber via WhatsApp!")
+            else:
+                st.info("Status: Logged and processed. No emergency alert sent.")
+            
+            if st.button("Clear Simulation Result", use_container_width=True):
+                st.session_state.sim_result = None
+                st.session_state.sim_notified = False
+                st.rerun()
 
 if st.button("Refresh Dashboard"):
     st.rerun()
