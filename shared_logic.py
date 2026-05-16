@@ -97,6 +97,21 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
                         media_url=[content.get("link", "")] if content.get("link") else None,
                         to=to_number
                     )
+            elif payload_type == "template":
+                # Twilio Content Template API
+                params = {
+                    "to": to_number,
+                    "content_sid": content.get("template", {}).get("name"), # We'll map 'name' to sid for compatibility
+                    "content_variables": json.dumps(content.get("template", {}).get("variables", {}))
+                }
+                if MESSAGING_SERVICE_SID:
+                    params["messaging_service_sid"] = MESSAGING_SERVICE_SID
+                else:
+                    params["from_"] = from_number
+                
+                res = twilio_client.messages.create(**params)
+                print(f"Twilio Template Sent: {res.sid}")
+                return True
             print(f"Twilio Message Sent (via Service: {MESSAGING_SERVICE_SID or from_number}): {res.sid}")
             return True
         except Exception as e:
