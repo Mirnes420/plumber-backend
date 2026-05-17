@@ -1,128 +1,159 @@
 import os
+import sys
+import traceback
 from fastapi import FastAPI, Request, Response, HTTPException, Form, UploadFile, File
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 import json
 from ai_engine import analyze_triage
 from database import log_incident
-
-from shared_logic import send_whatsapp_message, process_incoming_incident
+from logic import send_whatsapp_message, process_incoming_incident
 
 load_dotenv()
 
 app = FastAPI(title="WhatsApp Emergency Triage Bot")
 
-# WBOT Config
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 
 @app.get("/")
 async def root():
+    print("DEBUG: Root health check hit!")
     return {"status": "running", "service": "Plumbing Triage Bot"}
 
 @app.post("/webhook")
-@app.post("/webhook/") # Support both
+@app.post("/webhook/") 
 async def whatsapp_webhook(request: Request):
-    print(f"DEBUG: Webhook received! Method: {request.method}, URL: {request.url}")
-    form_data = await request.form()
-    customer_phone = form_data.get("From")
-    body_raw = form_data.get("Body", "").strip()
+    print(f"\n=================== WEBHOOK INBOUND ===================")
+    print(f"DEBUG: Method: {request.method} | URL: {request.url}")
     
-    if not customer_phone:
-        try:
-            json_data = await request.json()
-            customer_phone = json_data.get("From")
-            body_raw = json_data.get("Body", "").strip()
-        except:
-            pass
-            
-    if not customer_phone:
-        return JSONResponse({"status": "error", "message": "No sender phone found"})
+    try:
+        # Diagnostic check on incoming content types
+        content_type = request.headers.get("content-type", "")
+        print(f"DEBUG: Content-Type Header: {content_type}")
         
-    body_upper = body_raw.upper().replace(" ", "_").strip()
-    print(f"📥 Received from {customer_phone}: {body_upper}")
+        customer_phone = None
+        body_raw = ""
+        form_data = None
 
-    # Handle Commands (Filtering in WhatsApp Chat)
-    filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
-    
-    if body_upper in filter_keywords:
-        from database import get_incidents
-        incidents = get_incidents()
-
-        if body_upper in ["URGENT", "EMERGENCY"]:
-            print("🚨 Routing to High-Priority Alert Pipeline")
-            filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
-            title = "*🚨 Recent Urgent Tasks*"
-        elif body_upper in ["NOT_URGENT", "NON_EMERGENCY", "NO_EMERGENCY"]:
-            print("✅ Routing to Standard Log Archive")
-            filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
-            title = "*✅ Non-Urgent Tasks*"
-        else:  # ALL_TASKS, FILTER, MID, ALL
-            print(f"⚡ Routing to Context Filter: {body_upper}")
-            filtered = incidents[:5]
-            title = "*📋 All Recent Tasks*"
-
-        if not filtered:
-            msg_text = f"{title}\nNo tasks found."
+        # Robust multi-format parser with explicit debugging
+        if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            form_data = await request.form()
+            print(f"DEBUG: Form data keys found: {list(form_data.keys())}")
+            customer_phone = form_data.get("From")
+            body_raw = form_data.get("Body", "").strip()
         else:
-            msg_text = f"{title}\n\n"
-            for i in filtered:
-                time_str = (
-                    i['timestamp'].strftime("%H:%M")
-                    if hasattr(i['timestamp'], 'strftime')
-                    else str(i['timestamp'])[:5]
-                )
-                msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
+            try:
+                json_data = await request.json()
+                print(f"DEBUG: JSON payload found: {json_data}")
+                customer_phone = json_data.get("From")
+                body_raw = json_data.get("Body", "").strip()
+            except Exception as json_err:
+                print(f"DEBUG: Failed parsing as JSON: {str(json_err)}")
 
-        # Send message with dynamic variables and buttons
+        if not customer_phone:
+            print("❌ ERROR: Request received but no sender phone ('From') could be resolved.")
+            return JSONResponse({"status": "error", "message": "No sender phone found"}, status_code=400)
+            
+        body_upper = body_raw.upper().replace(" ", "_").strip()
+        print(f"📥 Processing text from {customer_phone}: '{body_raw}' (Normalized: {body_upper})")
+
+        # 1. Handle Commands (Filtering in WhatsApp Chat)
+        filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
+        
+        if body_upper in filter_keywords:
+            print(f"DEBUG: Keyword identified: {body_upper}. Executing database query.")
+            from database import get_incidents
+            incidents = get_incidents()
+            print(f"DEBUG: Total database incidents retrieved: {len(incidents)}")
+
+            if body_upper in ["URGENT", "EMERGENCY"]:
+                print("🚨 Routing to High-Priority Alert Pipeline")
+                filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
+                title = "*🚨 Recent Urgent Tasks*"
+            elif body_upper in ["NOT_URGENT", "NON_EMERGENCY", "NO_EMERGENCY"]:
+                print("✅ Routing to Standard Log Archive")
+                filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
+                title = "*✅ Non-Urgent Tasks*"
+            else:  
+                print(f"⚡ Routing to Context Filter: {body_upper}")
+                filtered = incidents[:5]
+                title = "*📋 All Recent Tasks*"
+
+            if not filtered:
+                msg_text = f"{title}\nNo tasks found."
+            else:
+                msg_text = f"{title}\n\n"
+                for i in filtered:
+                    time_str = (
+                        i['timestamp'].strftime("%H:%M")
+                        if hasattr(i['timestamp'], 'strftime')
+                        else str(i['timestamp'])[:5]
+                    )
+                    msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
+
+            # FIXED: Payload type flipped to 'text' using our unbreakable keyword-based menus
+            print(f"DEBUG: Dispatching compiled list back to {customer_phone} via wbot API")
+            await send_whatsapp_message(
+                to=customer_phone,
+                payload_type="text",
+                content={
+                    "body": msg_text,
+                    "buttons": ["Emergency", "No Emergency", "All"] # Left for fallback metadata compatibility
+                }
+            )
+            print("✅ Webhook response processed clean.")
+            return JSONResponse({"status": "ok"})
+
+        # 2. Handle New Incidents
+        print(f"延 Handling as conversational input. Sending to AI engine...")
+        
+        incoming_media = form_data.get("MediaUrl0") if form_data else None
+        sender_override = form_data.get("FromNumber") if form_data else None
+        plumber_override = form_data.get("PlumberNumber") if form_data else None
+        image_file = form_data.get("MediaFile") if form_data else None
+        
+        image_bytes = None
+        if image_file:
+            try:
+                image_bytes = await image_file.read()
+                print(f"DEBUG: Attached image binary loaded size: {len(image_bytes)} bytes")
+            except Exception as e:
+                print(f"⚠️ Error reading file data streaming layers: {e}")
+
+        from logic import process_incoming_incident
+        print("DEBUG: Executing process_incoming_incident pipeline...")
+        
+        triage_result, _ = await process_incoming_incident(
+            customer_phone, body_raw, incoming_media, 
+            sender_override=sender_override,
+            plumber_override=plumber_override,
+            image_bytes=image_bytes
+        )
+        
+        urgency = triage_result.get("urgency", "MEDIUM")
+        summary = triage_result.get("summary", "")
+        print(f"DEBUG: AI Processing Complete. Urgency: {urgency} | Summary length: {len(summary)}")
+
+        if urgency == "HIGH":
+            reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now."
+        else:
+            reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly."
+
         await send_whatsapp_message(
             to=customer_phone,
-            payload_type="buttons",
-            content={
-                "body": msg_text,
-                "buttons": ["Emergency", "No Emergency", "All"]
-            }
+            payload_type="text",
+            content={"body": reply_msg}
         )
-
+        print("✅ New incident tracked and confirmed successfully.")
         return JSONResponse({"status": "ok"})
 
-    # 2. Handle New Incidents
-    print(f"💬 Standard message or unmapped keyword: {body_upper}. Routing to AI Triage.")
-    incoming_media = form_data.get("MediaUrl0")
-    sender_override = form_data.get("FromNumber")
-    plumber_override = form_data.get("PlumberNumber")
-    image_file = form_data.get("MediaFile")
-    
-    image_bytes = None
-    if image_file:
-        try:
-            image_bytes = await image_file.read()
-        except Exception as e:
-            print(f"Error reading uploaded file: {e}")
+    except Exception as global_err:
+        print(f"❌ CRITICAL WEBHOOK EXCEPTION CRASH:")
+        print("".join(traceback.format_exception(type(global_err), global_err, global_err.__traceback__)))
+        sys.stdout.flush() # Force log buffer write immediately into Render's stream
+        return JSONResponse({"status": "internal_error", "detail": str(global_err)}, status_code=500)
 
-    from shared_logic import process_incoming_incident
-    triage_result, _ = await process_incoming_incident(
-        customer_phone, body_raw, incoming_media, 
-        sender_override=sender_override,
-        plumber_override=plumber_override,
-        image_bytes=image_bytes
-    )
-    
-    urgency = triage_result.get("urgency", "MEDIUM")
-    summary = triage_result.get("summary", "")
-
-    if urgency == "HIGH":
-        reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now."
-    else:
-        reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly."
-
-    await send_whatsapp_message(
-        to=customer_phone,
-        payload_type="text",
-        content={"body": reply_msg}
-    )
-
-    return JSONResponse({"status": "ok"})
 
 @app.post("/api/incident")
 async def api_incident(
@@ -130,36 +161,45 @@ async def api_incident(
     description: str = Form(...),
     image: UploadFile = File(None)
 ):
-    print(f"🌐 Web Form Submission from {phone}: {description}")
+    print(f"\n=================== WEB FORM INBOUND ===================")
+    print(f"🌐 Submission processing for destination endpoint: {phone}")
     
-    image_bytes = None
-    if image and image.filename:
-        image_bytes = await image.read()
+    try:
+        image_bytes = None
+        if image and image.filename:
+            image_bytes = await image.read()
+            print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
+            
+        from logic import process_incoming_incident
+        triage_result, _ = await process_incoming_incident(
+            phone, description, None, 
+            sender_override=None,
+            plumber_override=None,
+            image_bytes=image_bytes
+        )
         
-    from shared_logic import process_incoming_incident
-    triage_result, _ = await process_incoming_incident(
-        phone, description, None, 
-        sender_override=None,
-        plumber_override=None,
-        image_bytes=image_bytes
-    )
-    
-    urgency = triage_result.get("urgency", "MEDIUM")
-    summary = triage_result.get("summary", "")
+        urgency = triage_result.get("urgency", "MEDIUM")
+        summary = triage_result.get("summary", "")
+        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency}")
 
-    if urgency == "HIGH":
-        reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe received your web request. We've flagged this as high priority: {summary}\n\nA plumber is being paged now!"
-    else:
-        reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
+        if urgency == "HIGH":
+            reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe received your web request. We've flagged this as high priority: {summary}\n\nA plumber is being paged now!"
+        else:
+            reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
 
-    # Automatically send the confirmation back to the user on WhatsApp!
-    await send_whatsapp_message(
-        to=phone,
-        payload_type="text",
-        content={"body": reply_msg}
-    )
+        await send_whatsapp_message(
+            to=phone,
+            payload_type="text",
+            content={"body": reply_msg}
+        )
+        print("✅ Web form registration complete.")
+        return JSONResponse({"status": "success", "urgency": urgency, "summary": summary})
 
-    return JSONResponse({"status": "success", "urgency": urgency, "summary": summary})
+    except Exception as api_err:
+        print(f"❌ CRITICAL API_INCIDENT EXCEPTION CRASH:")
+        print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
+        sys.stdout.flush()
+        return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
 
 if __name__ == "__main__":
     import uvicorn
