@@ -1,6 +1,7 @@
 import os
 import json
 import httpx
+import base64
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
@@ -22,8 +23,7 @@ MODEL_TIERS = [
     "gemini-2.0-flash"
 ]
 
-SYSTEM_PROMPT = """
-You are an expert plumbing emergency dispatcher. 
+SYSTEM_PROMPT = """You are an expert plumbing emergency dispatcher. 
 Analyze the customer's message and any attached images to determine the urgency of the plumbing issue.
 
 URGENCY CATEGORIES:
@@ -37,39 +37,103 @@ You MUST respond with a valid JSON object only:
     "urgency": "HIGH" | "MEDIUM" | "LOW",
     "summary": "Short 1-sentence summary of the issue",
     "action_required": true | false
-}
-"""
+}"""
+
+OLLAMA_CHAT_URL = "https://financial-cup-dan-exhibits.trycloudflare.com/api/chat"
+OLLAMA_TAGS_URL = "https://financial-cup-dan-exhibits.trycloudflare.com/api/tags"
 
 async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None):
     """
-    Analyzes text and optionally an image using a tiered fallback system.
+    Analyzes text and optionally an image using Ollama (with Gemini as fallback).
     """
-    contents = [f"Customer Message: {text}"]
+    print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...'")
     
-    # 1. Handle image (either bytes or URL)
+    # 1. Download/Process Image if provided
+    img_data = None
     if image_bytes:
-        image_part = types.Part.from_bytes(
-            data=image_bytes,
-            mime_type="image/jpeg"
-        )
-        contents.append(image_part)
+        img_data = image_bytes
     elif image_url:
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+            headers = {"User-Agent": "Mozilla/5.0"}
             async with httpx.AsyncClient(follow_redirects=True, headers=headers) as client_httpx:
                 response = await client_httpx.get(image_url)
                 if response.status_code == 200:
-                    image_part = types.Part.from_bytes(
-                        data=response.content,
-                        mime_type="image/jpeg"
-                    )
-                    contents.append(image_part)
+                    img_data = response.content
                 else:
                     print(f"Failed to download image: HTTP {response.status_code}")
         except Exception as e:
             print(f"Image processing error: {e}")
 
-    # 2. Sequential Fallback Logic
+    # 2. Try Ollama (Primary)
+    try:
+        print("Attempting analysis with primary Ollama endpoint...")
+        
+        # Get dynamic model name or fallback to moondream:latest
+        model_name = "moondream:latest"
+        async with httpx.AsyncClient(timeout=10.0) as client_httpx:
+            try:
+                tags_resp = await client_httpx.get(OLLAMA_TAGS_URL)
+                if tags_resp.status_code == 200:
+                    models = tags_resp.json().get("models", [])
+                    if models:
+                        model_name = models[0]["name"]
+                        print(f"Dynamic model detected: {model_name}")
+            except Exception as tags_err:
+                print(f"Could not fetch dynamic tags, using default: {tags_err}")
+        
+        # Prepare messages
+        user_content = f"{SYSTEM_PROMPT}\n\nCustomer Message: {text}"
+        user_msg = {"role": "user", "content": user_content}
+        
+        if img_data:
+            base64_str = base64.b64encode(img_data).decode('utf-8')
+            user_msg["images"] = [base64_str]
+            
+        payload = {
+            "model": model_name,
+            "messages": [user_msg],
+            "stream": False
+        }
+        
+        async with httpx.AsyncClient(timeout=45.0) as client_httpx:
+            response = await client_httpx.post(OLLAMA_CHAT_URL, json=payload)
+            if response.status_code == 200:
+                resp_json = response.json()
+                assistant_content = resp_json.get("message", {}).get("content", "").strip()
+                print(f"Ollama response received: {assistant_content}")
+                
+                # Parse the response as JSON (extract from markdown codeblock if present)
+                cleaned_content = assistant_content
+                if "```json" in cleaned_content:
+                    cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
+                elif "```" in cleaned_content:
+                    cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
+                
+                parsed_json = json.loads(cleaned_content)
+                
+                # Validate required keys
+                if "urgency" in parsed_json and "summary" in parsed_json:
+                    print("✅ Ollama analysis succeeded!")
+                    return parsed_json
+                else:
+                    print("⚠️ Ollama response was missing required JSON keys.")
+            else:
+                print(f"⚠️ Ollama returned status code: {response.status_code}")
+                
+    except Exception as ollama_err:
+        print(f"⚠️ Ollama primary engine failed: {ollama_err}. Falling back to Gemini...")
+
+    # 3. Fallback to Gemini (Sequential Tiers)
+    print("🚀 Running Gemini fallback tiers...")
+    
+    contents = [f"Customer Message: {text}"]
+    if img_data:
+        image_part = types.Part.from_bytes(
+            data=img_data,
+            mime_type="image/jpeg"
+        )
+        contents.append(image_part)
+
     for model_name in MODEL_TIERS:
         try:
             print(f"Attempting analysis with {model_name}...")
@@ -83,15 +147,18 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
             )
             
             if response.text:
-                return json.loads(response.text)
+                parsed = json.loads(response.text)
+                print(f"✅ Gemini {model_name} fallback succeeded!")
+                return parsed
         
         except Exception as e:
             print(f"Model {model_name} failed: {e}. Moving to next tier...")
-            continue  # Hit the next model in the list
+            continue
 
-    # 3. Final Fallback if ALL models crash
+    # 4. Final Fallback if everything fails
+    print("❌ All AI systems failed. Returning default values.")
     return {
         "urgency": "MEDIUM",
-        "summary": "Critical AI Failure. All model tiers (2.5 & 2.0) failed. Manual review required.",
+        "summary": "AI system failure (Ollama & Gemini offline). Manual triage required.",
         "action_required": True
     }
