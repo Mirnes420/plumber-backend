@@ -31,6 +31,7 @@ class Incident(Base):
     raw_message = Column(Text)
     image_url = Column(String)
     status = Column(String, default="PENDING")
+    ai_engine = Column(String)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 class Plumber(Base):
@@ -45,7 +46,7 @@ class Plumber(Base):
 # Create table if it doesn't exist
 Base.metadata.create_all(bind=engine)
 
-def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, image_url: str = None):
+def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, image_url: str = None, ai_engine: str = None):
     """Logs an incident using SQLAlchemy."""
     db = SessionLocal()
     try:
@@ -55,7 +56,8 @@ def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary:
             urgency=urgency,
             summary=summary,
             raw_message=raw_message,
-            image_url=image_url
+            image_url=image_url,
+            ai_engine=ai_engine
         )
         db.add(new_incident)
         db.commit()
@@ -84,6 +86,7 @@ def get_incidents():
                 "raw_message": i.raw_message,
                 "image_url": i.image_url,
                 "status": i.status,
+                "ai_engine": i.ai_engine,
                 "timestamp": i.timestamp
             }
             for i in incidents

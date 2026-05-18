@@ -114,6 +114,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 # Validate required keys
                 if "urgency" in parsed_json and "summary" in parsed_json:
                     print("✅ Ollama analysis succeeded!")
+                    parsed_json["ai_engine"] = f"Ollama ({model_name})"
                     return parsed_json
                 else:
                     print("⚠️ Ollama response was missing required JSON keys.")
@@ -149,6 +150,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
             if response.text:
                 parsed = json.loads(response.text)
                 print(f"✅ Gemini {model_name} fallback succeeded!")
+                parsed["ai_engine"] = f"Gemini ({model_name})"
                 return parsed
         
         except Exception as e:
@@ -160,5 +162,6 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     return {
         "urgency": "MEDIUM",
         "summary": "AI system failure (Ollama & Gemini offline). Manual triage required.",
-        "action_required": True
+        "action_required": True,
+        "ai_engine": "Offline Fallback"
     }

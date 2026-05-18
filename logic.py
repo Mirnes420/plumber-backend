@@ -128,23 +128,26 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     summary = triage_result.get("summary", "No summary available")
     
     # 2. Log to Database
+    ai_engine_used = triage_result.get("ai_engine", "Unknown")
     log_incident(
         customer_phone=customer_phone,
         plumber_phone=target_plumber,
         urgency=urgency,
         summary=summary,
         raw_message=body,
-        image_url=media_url
+        image_url=media_url,
+        ai_engine=ai_engine_used
     )
 
     # 3. Notification to Plumber
     notification_sent = False
     try:
-        # If we have bytes but no URL (Customer App), upload it temporarily for Twilio
         temp_url = None
         if image_bytes and not media_url:
-            print("Uploading local image for WhatsApp notification...")
-            temp_url = await upload_to_tmp(image_bytes)
+            print("Encoding image to base64 for direct WhatsApp transfer...")
+            import base64
+            base64_str = base64.b64encode(image_bytes).decode('utf-8')
+            temp_url = f"data:image/jpeg;base64,{base64_str}"
         
         target_media_url = media_url or temp_url
         

@@ -159,10 +159,11 @@ async def whatsapp_webhook(request: Request):
 async def api_incident(
     phone: str = Form(...),
     description: str = Form(...),
+    plumber_id: str = Form(None),
     image: UploadFile = File(None)
 ):
     print(f"\n=================== WEB FORM INBOUND ===================")
-    print(f"🌐 Submission processing for destination endpoint: {phone}")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Plumber: {plumber_id}")
     
     try:
         image_bytes = None
@@ -174,7 +175,7 @@ async def api_incident(
         triage_result, _ = await process_incoming_incident(
             phone, description, None, 
             sender_override=None,
-            plumber_override=None,
+            plumber_override=plumber_id,
             image_bytes=image_bytes
         )
         
