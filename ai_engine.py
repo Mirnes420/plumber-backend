@@ -70,7 +70,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
         
         # Get dynamic model name or fallback to moondream:latest
         model_name = "moondream:latest"
-        async with httpx.AsyncClient(timeout=10.0) as client_httpx:
+        async with httpx.AsyncClient(timeout=5.0) as client_httpx:
             try:
                 tags_resp = await client_httpx.get(OLLAMA_TAGS_URL)
                 if tags_resp.status_code == 200:
@@ -95,7 +95,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
             "stream": False
         }
         
-        async with httpx.AsyncClient(timeout=45.0) as client_httpx:
+        async with httpx.AsyncClient(timeout=30.0) as client_httpx:
             response = await client_httpx.post(OLLAMA_CHAT_URL, json=payload)
             if response.status_code == 200:
                 resp_json = response.json()
