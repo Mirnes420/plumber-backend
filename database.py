@@ -46,6 +46,22 @@ class Plumber(Base):
 # Create table if it doesn't exist
 Base.metadata.create_all(bind=engine)
 
+# Seed default plumbers if table is empty
+db_seed = SessionLocal()
+try:
+    if db_seed.query(Plumber).count() == 0:
+        print("🌱 Seeding default plumbers...")
+        p1 = Plumber(id="1", name="Mario Mario", plumber_phone="385919293138", dispatcher_phone="", active=True)
+        p2 = Plumber(id="2", name="Luigi Mario", plumber_phone="38767103917", dispatcher_phone="", active=True)
+        db_seed.add(p1)
+        db_seed.add(p2)
+        db_seed.commit()
+        print("✅ Default plumbers seeded successfully.")
+except Exception as seed_err:
+    print(f"Failed to seed plumbers: {seed_err}")
+finally:
+    db_seed.close()
+
 def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, image_url: str = None, ai_engine: str = None):
     """Logs an incident using SQLAlchemy."""
     db = SessionLocal()
