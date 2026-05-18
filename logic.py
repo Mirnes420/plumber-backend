@@ -48,7 +48,7 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
     }
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             data = {"number": to_number}
             
             if payload_type == "text":
@@ -64,17 +64,32 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
             else:
                 return False
 
-            response = await client.post(f"{WBOT_API_URL}/send", headers=headers, json=data)
+            # Retry loop for Render cold starts
+            max_retries = 3
+            for attempt in range(1, max_retries + 1):
+                try:
+                    print(f"  → Attempt {attempt}/{max_retries}: POST {WBOT_API_URL}/send")
+                    response = await client.post(f"{WBOT_API_URL}/send", headers=headers, json=data)
 
-            if response.status_code in [200, 201]:
-                print(f"wbot Send Success: {response.status_code}")
-                return True
-            else:
-                print(f"wbot API Error: {response.status_code} - {response.text}")
-                return False
+                    if response.status_code in [200, 201]:
+                        print(f"✅ wbot Send Success: {response.status_code}")
+                        return True
+                    else:
+                        print(f"⚠️ wbot API Error: {response.status_code} - {response.text[:200]}")
+                        if attempt < max_retries:
+                            import asyncio
+                            await asyncio.sleep(5)
+                except Exception as retry_err:
+                    print(f"⚠️ Attempt {attempt} failed: {retry_err}")
+                    if attempt < max_retries:
+                        import asyncio
+                        await asyncio.sleep(5)
+            
+            print("❌ All retry attempts to wbot /send failed.")
+            return False
                 
     except Exception as e:
-        print(f"wbot Send Error: {e}")
+        print(f"❌ wbot Send Error: {e}")
         return False
 
 async def process_incoming_incident(customer_phone: str, body: str, media_url: str = None, sender_override: str = None, image_bytes: bytes = None, plumber_override: str = None):
