@@ -103,7 +103,9 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     # Fallback to default if no valid plumber found yet
     if not target_plumber:
         target_plumber = PLUMBER_NUMBER
-        print(f"ℹ️ Using default plumber number: {target_plumber}")
+        if not target_plumber:
+            target_plumber = "me"
+        print(f"ℹ️ Routing to target plumber: {target_plumber}")
     
     # 1. AI Triage
     triage_result = await analyze_triage(body, media_url, image_bytes)
@@ -143,25 +145,30 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
                 content={"link": target_media_url, "caption": full_summary},
                 sender_override=sender_override
             )
+        target_plumber = plumber_override or PLUMBER_NUMBER
+        if not target_plumber:
+            target_plumber = "me"
+            
+        print(f"ℹ️ Using default plumber number: {target_plumber}")
+
+        # Select emoji based on urgency
+        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "✅"
+        full_summary = f"{urgency_emoji} NEW INCIDENT [{urgency}]: {summary}\nCustomer: {customer_phone}"
+
+        if target_media_url:
+            # Send ONE message with Image + Caption
+            await send_whatsapp_message(
+                to=target_plumber,
+                payload_type="image",
+                content={"link": target_media_url, "caption": full_summary},
+                sender_override=sender_override
+            )
         else:
             # Send ONE text message
             await send_whatsapp_message(
                 to=target_plumber,
-                payload_type="text" if twilio_client else "template",
-                content={"body": full_summary} if twilio_client else {
-                    "template": {
-                        "name": os.getenv("CONTACT_CUSTOMER_TEMPLATE_NAME", "contact_customer"),
-                        "language": {"code": "en_US"},
-                        "components": [
-                            {
-                                "type": "button",
-                                "sub_type": "url",
-                                "index": "0",
-                                "parameters": [{"type": "text", "text": customer_phone}]
-                            }
-                        ]
-                    }
-                },
+                payload_type="text",
+                content={"body": full_summary},
                 sender_override=sender_override
             )
         notification_sent = True
