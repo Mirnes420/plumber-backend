@@ -104,7 +104,7 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
     if not target_plumber:
         target_plumber = PLUMBER_NUMBER
         if not target_plumber:
-            target_plumber = "me"
+            target_plumber = "385919293138" # Hardcoded fallback until DB routing is fully implemented
         print(f"ℹ️ Routing to target plumber: {target_plumber}")
     
     # 1. AI Triage
@@ -133,24 +133,6 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         
         target_media_url = media_url or temp_url
         
-        # Select emoji based on urgency
-        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "✅"
-        full_summary = f"{urgency_emoji} NEW INCIDENT [{urgency}]: {summary}\nCustomer: {customer_phone}"
-
-        if target_media_url:
-            # Send ONE message with Image + Caption
-            await send_whatsapp_message(
-                to=target_plumber,
-                payload_type="image",
-                content={"link": target_media_url, "caption": full_summary},
-                sender_override=sender_override
-            )
-        target_plumber = plumber_override or PLUMBER_NUMBER
-        if not target_plumber:
-            target_plumber = "me"
-            
-        print(f"ℹ️ Using default plumber number: {target_plumber}")
-
         # Select emoji based on urgency
         urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "✅"
         full_summary = f"{urgency_emoji} NEW INCIDENT [{urgency}]: {summary}\nCustomer: {customer_phone}"
