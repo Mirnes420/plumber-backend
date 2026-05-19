@@ -39,8 +39,8 @@ You MUST respond with a valid JSON object only:
     "action_required": true | false
 }"""
 
-OLLAMA_CHAT_URL = "https://financial-cup-dan-exhibits.trycloudflare.com/api/chat"
-OLLAMA_TAGS_URL = "https://financial-cup-dan-exhibits.trycloudflare.com/api/tags"
+OLLAMA_CHAT_URL = "https://ai.gentlemansolutions.com/api/chat"
+OLLAMA_TAGS_URL = "https://ai.gentlemansolutions.com/api/tags"
 
 async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None):
     """
@@ -92,34 +92,46 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
         payload = {
             "model": model_name,
             "messages": [user_msg],
-            "stream": False
+            "stream": True
         }
         
+        print("Sending streaming request to Ollama...")
+        assistant_content = ""
         async with httpx.AsyncClient(timeout=30.0) as client_httpx:
-            response = await client_httpx.post(OLLAMA_CHAT_URL, json=payload)
-            if response.status_code == 200:
-                resp_json = response.json()
-                assistant_content = resp_json.get("message", {}).get("content", "").strip()
-                print(f"Ollama response received: {assistant_content}")
-                
-                # Parse the response as JSON (extract from markdown codeblock if present)
-                cleaned_content = assistant_content
-                if "```json" in cleaned_content:
-                    cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
-                elif "```" in cleaned_content:
-                    cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
-                
-                parsed_json = json.loads(cleaned_content)
-                
-                # Validate required keys
-                if "urgency" in parsed_json and "summary" in parsed_json:
-                    print("✅ Ollama analysis succeeded!")
-                    parsed_json["ai_engine"] = f"Ollama ({model_name})"
-                    return parsed_json
+            async with client_httpx.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
+                if response.status_code == 200:
+                    async for line in response.aiter_lines():
+                        if line:
+                            try:
+                                data = json.loads(line)
+                                if "message" in data:
+                                    chunk = data["message"]["content"]
+                                    assistant_content += chunk
+                            except json.JSONDecodeError:
+                                pass
                 else:
-                    print("⚠️ Ollama response was missing required JSON keys.")
-            else:
-                print(f"⚠️ Ollama returned status code: {response.status_code}")
+                    print(f"⚠️ Ollama returned status code: {response.status_code}")
+                    raise Exception(f"HTTP {response.status_code}")
+
+        assistant_content = assistant_content.strip()
+        print(f"Ollama response received: {assistant_content}")
+        
+        # Parse the response as JSON (extract from markdown codeblock if present)
+        cleaned_content = assistant_content
+        if "```json" in cleaned_content:
+            cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
+        elif "```" in cleaned_content:
+            cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
+        
+        parsed_json = json.loads(cleaned_content)
+        
+        # Validate required keys
+        if "urgency" in parsed_json and "summary" in parsed_json:
+            print("✅ Ollama analysis succeeded!")
+            parsed_json["ai_engine"] = f"Ollama ({model_name})"
+            return parsed_json
+        else:
+            print("⚠️ Ollama response was missing required JSON keys.")
                 
     except Exception as ollama_err:
         print(f"⚠️ Ollama primary engine failed: {ollama_err}. Falling back to Gemini...")
