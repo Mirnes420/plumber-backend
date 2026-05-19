@@ -67,19 +67,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     # 2. Try Ollama (Primary)
     try:
         print("Attempting analysis with primary Ollama endpoint...")
-        
-        # Get dynamic model name or fallback to moondream:latest
         model_name = "moondream:latest"
-        async with httpx.AsyncClient(timeout=5.0) as client_httpx:
-            try:
-                tags_resp = await client_httpx.get(OLLAMA_TAGS_URL)
-                if tags_resp.status_code == 200:
-                    models = tags_resp.json().get("models", [])
-                    if models:
-                        model_name = models[0]["name"]
-                        print(f"Dynamic model detected: {model_name}")
-            except Exception as tags_err:
-                print(f"Could not fetch dynamic tags, using default: {tags_err}")
         
         # Prepare messages
         user_content = f"{SYSTEM_PROMPT}\n\nCustomer Message: {text}"
@@ -97,7 +85,8 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
         
         print("Sending streaming request to Ollama...")
         assistant_content = ""
-        async with httpx.AsyncClient(timeout=30.0) as client_httpx:
+        # Infinite timeout ensures it never aborts early due to loading/processing speed
+        async with httpx.AsyncClient(timeout=None) as client_httpx:
             async with client_httpx.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
                 if response.status_code == 200:
                     async for line in response.aiter_lines():
