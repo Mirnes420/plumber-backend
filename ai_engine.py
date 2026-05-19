@@ -67,7 +67,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     # 2. Try Ollama (Primary)
     try:
         print("Attempting analysis with primary Ollama endpoint...")
-        model_name = "moondream:latest"
+        model_name = "llava-phi3:latest"
         
         # Prepare messages
         user_content = f"{SYSTEM_PROMPT}\n\nCustomer Message: {text}"
