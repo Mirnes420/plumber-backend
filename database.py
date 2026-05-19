@@ -43,6 +43,12 @@ class Plumber(Base):
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
 
+class WhatsAppAuth(Base):
+    __tablename__ = "whatsapp_auth_store"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text)
+
 # Create table if it doesn't exist
 Base.metadata.create_all(bind=engine)
 
