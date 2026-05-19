@@ -92,12 +92,25 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                     async for line in response.aiter_lines():
                         if line:
                             try:
-                                data = json.loads(line)
-                                if "message" in data:
-                                    chunk = data["message"]["content"]
-                                    assistant_content += chunk
-                            except json.JSONDecodeError:
-                                pass
+                                # Ensure we have a string representation of the line
+                                line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+                                line_str = line_str.strip()
+                                if not line_str:
+                                    continue
+                                
+                                # Split by newline in case multiple JSON chunks are delivered in a single packet
+                                for part in line_str.split("\n"):
+                                    part = part.strip()
+                                    if part:
+                                        try:
+                                            data = json.loads(part)
+                                            if "message" in data:
+                                                chunk = data["message"]["content"]
+                                                assistant_content += chunk
+                                        except json.JSONDecodeError:
+                                            pass
+                            except Exception as e:
+                                print(f"Error parsing streaming packet: {e}")
                 else:
                     print(f"⚠️ Ollama returned status code: {response.status_code}")
                     raise Exception(f"HTTP {response.status_code}")
