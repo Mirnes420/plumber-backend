@@ -6,6 +6,7 @@ import asyncio
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
+import time
 
 if sys.platform.startswith("win"):
     if hasattr(sys.stdout, "reconfigure"):
@@ -82,7 +83,8 @@ async def query_ollama_non_stream(url: str, payload: dict) -> str:
 
 async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None):
     print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...'")
-    
+    print("Starting the timer")
+    timer_start = time.time()
     # Fire off image network down-stream instantly without blocking processing execution
     image_download_task = None
     img_data = image_bytes
@@ -111,7 +113,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                     "temperature": 0.0  # Setting low temperature locks fast path predictable generation
                 }
             }
-            
+
             raw_response = await query_ollama_non_stream(ollama_url, payload)
             
             cleaned_content = raw_response
@@ -171,6 +173,9 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 return parsed
         except Exception:
             continue
+    
+    timer_end = time.time()
+    print(f"\nTTR {timer_end - timer_start:.2f} seconds.")
 
     return {
         "urgency": "MEDIUM",
