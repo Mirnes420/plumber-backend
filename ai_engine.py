@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import httpx
+import base64
 import asyncio
 from google import genai
 from google.genai import types
@@ -59,6 +60,7 @@ public_fallback = "https://ai.gentlemansolutions.com/api/chat"
 if public_fallback not in OLLAMA_ENDPOINTS:
     OLLAMA_ENDPOINTS.append(public_fallback)
 
+
 async def download_image_async(image_url: str) -> bytes:
     """Asynchronously download image bytes down a standalone thread."""
     try:
@@ -71,21 +73,37 @@ async def download_image_async(image_url: str) -> bytes:
         print(f"Background image download error: {e}")
     return None
 
-async def query_ollama_non_stream(url: str, payload: dict) -> str:
-    """Uses standard POST instead of stream parsing for minimum internal pipeline latency."""
-    async with httpx.AsyncClient(timeout=15.0) as client_httpx:
-        response = await client_httpx.post(url, json=payload)
-        if response.status_code == 200:
-            data = response.json()
-            if "message" in data:
-                return data["message"]["content"].strip()
-        raise Exception(f"Ollama error: HTTP {response.status_code}")
+
+async def query_ollama_stream(url: str, payload: dict) -> str:
+    assistant_content = ""
+    async with httpx.AsyncClient(timeout=30.0) as client_httpx:
+        async with client_httpx.stream("POST", url, json=payload) as response:
+            if response.status_code == 200:
+                async for line in response.aiter_lines():
+                    if line:
+                        line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+                        line_str = line_str.strip()
+                        if not line_str:
+                            continue
+                        for part in line_str.split("\n"):
+                            part = part.strip()
+                            if part:
+                                try:
+                                    data = json.loads(part)
+                                    if "message" in data:
+                                        assistant_content += data["message"]["content"]
+                                except json.JSONDecodeError:
+                                    pass
+            else:
+                raise Exception(f"HTTP {response.status_code}")
+    return assistant_content.strip()
 
 async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None):
     print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...'")
     print("Starting the timer")
     timer_start = time.time()
-    # Fire off image network down-stream instantly without blocking processing execution
+    
+    # Fire off background image fetch task instantly without blocking execution
     image_download_task = None
     img_data = image_bytes
 
@@ -97,10 +115,10 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     
     for ollama_url in OLLAMA_ENDPOINTS:
         try:
-            print(f"Attempting rapid text-based check with Ollama: {ollama_url}...")
+            print(f"Attempting text-based filtering with Ollama endpoint: {ollama_url}...")
             model_name = "phi3:mini"
             
-            # Since we don't block for the download, we check if image parameters were requested
+            # Use presence indicators since background download hasn't finished yet
             has_image_attached = True if (img_data or image_url) else False
             image_presence_context = "An image was attached by the user." if has_image_attached else "No image was attached."
             user_content = f"{SYSTEM_PROMPT}\n\nContext: {image_presence_context}\nCustomer Message: {text}"
@@ -108,13 +126,12 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
             payload = {
                 "model": model_name,
                 "messages": [{"role": "user", "content": user_content}],
-                "stream": False,  # Turned off stream parsing to let Go/C++ memory complete execution instantly
-                "options": {
-                    "temperature": 0.0  # Setting low temperature locks fast path predictable generation
-                }
+                "stream": True
             }
-
-            raw_response = await query_ollama_non_stream(ollama_url, payload)
+            
+            print("Sending text payload to Phi3...")
+            raw_response = await query_ollama_stream(ollama_url, payload)
+            print(f"Ollama raw output: {raw_response}")
             
             cleaned_content = raw_response
             if "```json" in cleaned_content:
@@ -127,29 +144,33 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
             if "urgency" in parsed_json and "summary" in parsed_json:
                 # ROUTING INTERCEPTION
                 if has_image_attached and parsed_json.get("image_needed", False):
-                    print("🔄 Image confirmation true. Interrupting local route for Gemini Vision...")
+                    print("🔄 Phi3 indicated that image evaluation is REQUIRED. Aborting Ollama cascade to run Gemini Vision...")
                     break
                 
-                print("✅ Triage handled entirely via text analysis path.")
+                print("✅ Ollama triage successful (Image analysis skipped or unneeded).")
                 parsed_json["ai_engine"] = f"Ollama ({model_name} @ {ollama_url})"
                 ollama_success = True
                 break
+            else:
+                print("⚠️ Ollama response structure was invalid.")
                 
         except Exception as ollama_err:
-            print(f"⚠️ Ollama endpoint bypassed or timed out: {ollama_err}")
+            print(f"⚠️ Ollama endpoint failed: {ollama_err}")
 
     if ollama_success and parsed_json:
-        # Cancel running task if it's not needed to clean up memory resources
+        # Cancel live background task if Ollama processed everything via text alone
         if image_download_task and not image_download_task.done():
             image_download_task.cancel()
+        print(f"\nTTF {time.time() - timer_start:.2f} seconds.")
         return parsed_json
 
-    # Resolve background download if Gemini execution is required
+    # Await image download resolution only when Gemini Vision route is forced
     if image_download_task:
         print("Waiting for pending background image download to resolve...")
         img_data = await image_download_task
 
-    print("🚀 Running Gemini Parallel Cluster...")
+    print("🚀 Triggering Gemini Engine (Primary pipeline execution or visual triage fallback)...")
+    
     contents = [f"Customer Message: {text}"]
     if img_data:
         image_part = types.Part.from_bytes(data=img_data, mime_type="image/jpeg")
@@ -157,29 +178,32 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
 
     for model_name in MODEL_TIERS:
         try:
+            print(f"Attempting analysis with {model_name}...")
             response = client.models.generate_content(
                 model=model_name,
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
-                    response_mime_type="application/json",
-                    temperature=0.0
+                    response_mime_type="application/json"
                 )
             )
             
             if response.text:
                 parsed = json.loads(response.text)
+                print(f"✅ Gemini {model_name} execution succeeded!")
                 parsed["ai_engine"] = f"Gemini ({model_name})"
+                print(f"\nTTF {time.time() - timer_start:.2f} seconds.")
                 return parsed
-        except Exception:
+        
+        except Exception as e:
+            print(f"Model {model_name} failed: {e}. Advancing down the cluster...")
             continue
-    
-    timer_end = time.time()
-    print(f"\nTTR {timer_end - timer_start:.2f} seconds.")
 
+    print("❌ All AI endpoints down. Running failsafe defaults.")
+    print(f"\nTTF {time.time() - timer_start:.2f} seconds.")
     return {
         "urgency": "MEDIUM",
-        "summary": "AI network timeout or fatal parsing error.",
+        "summary": "AI network timeout or fatal parsing error. Handing over to dispatcher.",
         "action_required": True,
         "image_needed": False,
         "ai_engine": "Offline Fallback"
