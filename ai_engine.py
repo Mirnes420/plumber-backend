@@ -92,7 +92,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     for ollama_url in OLLAMA_ENDPOINTS:
         try:
             print(f"Attempting analysis with Ollama endpoint: {ollama_url}...")
-            model_name = "phi3:latest"
+            model_name = "phi3:mini"
             
             # Prepare messages
             user_content = f"{SYSTEM_PROMPT}\n\nCustomer Message: {text}"
