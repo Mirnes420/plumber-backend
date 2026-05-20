@@ -12,7 +12,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL must be set in .env")
 
-# Handle the case where SQLAlchemy might need 'postgresql://' instead of 'postgres://'
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
@@ -29,6 +28,11 @@ class Incident(Base):
     urgency = Column(String)
     summary = Column(Text)
     raw_message = Column(Text)
+    
+    # ADDED: Table column mappings for the schema attributes added to Supabase
+    location = Column(Text)
+    customer_name = Column(String)
+    
     image_url = Column(String)
     status = Column(String, default="PENDING")
     ai_engine = Column(String)
@@ -37,7 +41,7 @@ class Incident(Base):
 class Plumber(Base):
     __tablename__ = "plumbers"
 
-    id = Column(String, primary_key=True) # Can be '1', '2' or a slug
+    id = Column(String, primary_key=True) 
     name = Column(String)
     plumber_phone = Column(String)
     dispatcher_phone = Column(String)
@@ -49,10 +53,8 @@ class WhatsAppAuth(Base):
     key = Column(String, primary_key=True)
     value = Column(Text)
 
-# Create table if it doesn't exist
 Base.metadata.create_all(bind=engine)
 
-# Seed default plumbers if table is empty
 db_seed = SessionLocal()
 try:
     if db_seed.query(Plumber).count() == 0:
@@ -68,7 +70,8 @@ except Exception as seed_err:
 finally:
     db_seed.close()
 
-def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, image_url: str = None, ai_engine: str = None):
+# CHANGED: Added location and customer_name as incoming function parameters
+def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, location: str = None, customer_name: str = None, image_url: str = None, ai_engine: str = None):
     """Logs an incident using SQLAlchemy."""
     db = SessionLocal()
     try:
@@ -78,6 +81,8 @@ def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary:
             urgency=urgency,
             summary=summary,
             raw_message=raw_message,
+            location=location,       # ADDED
+            customer_name=customer_name, # ADDED
             image_url=image_url,
             ai_engine=ai_engine
         )
@@ -97,7 +102,6 @@ def get_incidents():
     db = SessionLocal()
     try:
         incidents = db.query(Incident).order_by(Incident.timestamp.desc()).all()
-        # Convert to list of dicts for compatibility with the rest of the app
         return [
             {
                 "id": i.id,
@@ -106,6 +110,11 @@ def get_incidents():
                 "urgency": i.urgency,
                 "summary": i.summary,
                 "raw_message": i.raw_message,
+                
+                # ADDED: Map fields to JSON response dictionary for dashboard compatibility
+                "location": i.location,
+                "customer_name": i.customer_name,
+                
                 "image_url": i.image_url,
                 "status": i.status,
                 "ai_engine": i.ai_engine,
@@ -143,7 +152,6 @@ def get_plumber_by_id(plumber_id: str):
     db = SessionLocal()
     try:
         from database import Plumber
-        # Cast to string to handle both int and string IDs
         return db.query(Plumber).filter(Plumber.id == str(plumber_id), Plumber.active == True).first()
     except Exception as e:
         print(f"Error fetching plumber {plumber_id}: {e}")

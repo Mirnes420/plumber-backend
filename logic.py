@@ -1,7 +1,21 @@
 import os
+import sys
 from ai_engine import analyze_triage
 from database import log_incident
 from dotenv import load_dotenv
+
+# Force UTF-8 encoding for standard output and error on Windows
+if sys.platform.startswith("win"):
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
 
 load_dotenv()
 
@@ -92,21 +106,29 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
         print(f"❌ wbot Send Error: {e}")
         return False
 
-async def process_incoming_incident(customer_phone: str, body: str, media_url: str = None, sender_override: str = None, image_bytes: bytes = None, plumber_override: str = None):
+# CHANGED: Added location parameter to the function signature
+# CHANGED: Added customer_name parameter to the signature logic block
+async def process_incoming_incident(
+    customer_phone: str, 
+    body: str, 
+    location: str = None, 
+    customer_name: str = None,  # ADDED
+    media_url: str = None, 
+    sender_override: str = None, 
+    image_bytes: bytes = None, 
+    plumber_override: str = None
+):
     """
     Core logic to handle an incoming plumbing request.
     """
-    print(f"Processing incident from {customer_phone} for plumber {plumber_override or 'DEFAULT'}")
+    print(f"Processing incident from {customer_name or 'Unknown'} ({customer_phone})")
     
     # 0. Plumber Lookup
     target_plumber = None
-    
     if plumber_override:
-        # If it's already a phone number, use it
         if str(plumber_override).startswith("+") or str(plumber_override).startswith("whatsapp:"):
             target_plumber = plumber_override
         else:
-            # Otherwise, lookup by ID/Slug in DB
             from database import get_plumber_by_id
             plumber_obj = get_plumber_by_id(plumber_override)
             if plumber_obj:
@@ -115,11 +137,10 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
             else:
                 print(f"⚠️ Plumber ID '{plumber_override}' not found in DB.")
     
-    # Fallback to default if no valid plumber found yet
     if not target_plumber:
         target_plumber = PLUMBER_NUMBER
         if not target_plumber:
-            target_plumber = "385919293138" # Hardcoded fallback until DB routing is fully implemented
+            target_plumber = "385919293138" 
         print(f"ℹ️ Routing to target plumber: {target_plumber}")
     
     # 1. AI Triage
@@ -135,6 +156,8 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
         urgency=urgency,
         summary=summary,
         raw_message=body,
+        location=location,
+        customer_name=customer_name,  # ADDED: Pass parameter string down to database.py handler
         image_url=media_url,
         ai_engine=ai_engine_used
     )
@@ -150,13 +173,21 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
             temp_url = f"data:image/jpeg;base64,{base64_str}"
         
         target_media_url = media_url or temp_url
-        
-        # Select emoji based on urgency
         urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "✅"
-        full_summary = f"{urgency_emoji} NEW INCIDENT [{urgency}]: {summary}\nCustomer: {customer_phone}"
+        
+        # CHANGED: Formatted template strings to include name natively inside notifications
+        location_text = location if location else "Not provided"
+        name_text = customer_name if customer_name else "Not provided"
+        
+        full_summary = (
+            f"{urgency_emoji} *NEW EMERGENCY ALERT* [{urgency}]\n\n"
+            f"*Customer Name:* {name_text}\n"
+            f"*Issue:* {summary}\n"
+            f"*Address:* {location_text}\n"
+            f"*Phone:* {customer_phone}"
+        )
 
         if target_media_url:
-            # Send ONE message with Image + Caption
             await send_whatsapp_message(
                 to=target_plumber,
                 payload_type="image",
@@ -164,7 +195,6 @@ async def process_incoming_incident(customer_phone: str, body: str, media_url: s
                 sender_override=sender_override
             )
         else:
-            # Send ONE text message
             await send_whatsapp_message(
                 to=target_plumber,
                 payload_type="text",
