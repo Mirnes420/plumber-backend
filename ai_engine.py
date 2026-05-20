@@ -3,8 +3,10 @@ import sys
 import json
 import httpx
 import base64
+import traceback  # Added to see the exact error strings in logs
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # Force UTF-8 encoding for standard output and error on Windows
@@ -37,7 +39,6 @@ MODEL_TIERS = [
     "gemini-2.0-flash"
 ]
 
-# Optimized Prompt to guide the fast text filter vs vision routing
 SYSTEM_PROMPT = """You are an expert plumbing emergency dispatcher. 
 Analyze the customer's message and any attached images to determine the urgency of the plumbing issue.
 
@@ -47,15 +48,16 @@ URGENCY CATEGORIES:
 - LOW: Minor repairs or maintenance (e.g., dripping faucet, running toilet, scheduling a quote).
 
 If the text clearly states a severe issue (flooding, leaks, sewage, gas), categorize it immediately.
-If the text is vague (e.g., "look at this", "is this normal?", "see attached") and an image is present, set "needs_vision": true.
+If the text is vague (e.g., "look at this", "is this normal?", "see attached") and an image is present, set "needs_vision": true."""
 
-Respond ONLY with this JSON structure:
-{
-    "urgency": "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN",
-    "summary": "1-sentence summary",
-    "action_required": true | false,
-    "needs_vision": true | false
-}"""
+
+# Define a strict Pydantic schema to eliminate JSON structure failures
+class TriageResponse(BaseModel):
+    urgency: str = Field(description="Must be HIGH, MEDIUM, LOW, or UNKNOWN")
+    summary: str = Field(description="1-sentence summary of the plumbing problem")
+    action_required: bool = Field(description="True if dispatcher dispatch required immediately")
+    needs_vision: bool = Field(description="True if text is too vague and explicitly requires visual analysis")
+
 
 # List of Ollama endpoints to try in order
 OLLAMA_ENDPOINTS = []
@@ -96,12 +98,21 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     ollama_success = False
     fast_text_model = "phi3:mini"
     
+    # Inject format helper context directly into Ollama's prompt tracking
+    ollama_format_prompt = f"""{SYSTEM_PROMPT}
+    
+    Respond ONLY with this JSON structure:
+    {{
+        "urgency": "HIGH" | "MEDIUM" | "LOW" | "UNKNOWN",
+        "summary": "1-sentence summary",
+        "action_required": true | false,
+        "needs_vision": true | false
+    }}"""
+
     for ollama_url in OLLAMA_ENDPOINTS:
         try:
             print(f"Attempting fast text analysis with Ollama endpoint: {ollama_url}...")
-            
-            # Construct clear prompt layout for the text model
-            user_content = f"{SYSTEM_PROMPT}\n\nCustomer Message: {text}"
+            user_content = f"{ollama_format_prompt}\n\nCustomer Message: {text}"
             
             payload = {
                 "model": fast_text_model,
@@ -109,12 +120,12 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 "stream": True,
                 "options": {
                     "temperature": 0.0,
-                    "keep_alive": 0  # Forces memory offload instantly on host
+                    "keep_alive": 0
                 }
             }
             
             assistant_content = ""
-            async with httpx.AsyncClient(timeout=None) as client_httpx:
+            async with httpx.AsyncClient(timeout=15.0) as client_httpx: # Prevent hanging indefinitely
                 async with client_httpx.stream("POST", ollama_url, json=payload) as response:
                     if response.status_code == 200:
                         async for line in response.aiter_lines():
@@ -138,7 +149,6 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
 
             assistant_content = assistant_content.strip()
             
-            # Clean Markdown enclosures if the small model wraps them
             cleaned_content = assistant_content
             if "```json" in cleaned_content:
                 cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
@@ -153,34 +163,31 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 break
                 
         except Exception as ollama_err:
-            print(f"Ollama fast text routing failed or timed out: {ollama_err}")
+            print(f"[Ollama Error Logged]: {ollama_err}")
 
     # Decision Node Check
     if ollama_success and parsed_json:
-        # Check if the text execution provides a conclusive classification without needing vision
         if not parsed_json.get("needs_vision") and parsed_json.get("urgency") != "UNKNOWN":
             print("[Success] Text analysis sufficient. Bypassing cloud vision pipeline completely.")
             return parsed_json
         else:
             print("Text was ambiguous or explicitly flagged the need for visual context.")
     else:
-        print("⚠️ Local triage pipeline was unreachable. Routing request entirely to Gemini cloud.")
+        print("⚠️ Local triage pipeline was unreachable or timed out. Routing request entirely to Gemini cloud.")
 
-    # 3. Step 2: Gemini Vision Fallback (Triggered only if image confirmation is mandatory)
+    # 3. Step 2: Gemini Vision Fallback
     if not img_data:
         print("Vision analysis requested but no valid image payload exists. Returning text metadata.")
         if parsed_json:
             return parsed_json
     
     print("Running Gemini vision fallback tiers to analyze the image...")
-    contents = [f"Customer Message: {text}"]
     
-    if img_data:
-        image_part = types.Part.from_bytes(
-            data=img_data,
-            mime_type="image/jpeg"
-        )
-        contents.append(image_part)
+    # Properly separate Text and Byte entities into individual Parts for the content array
+    contents = [
+        types.Part.from_text(text=f"Customer Message: {text}"),
+        types.Part.from_bytes(data=img_data, mime_type="image/jpeg")
+    ]
 
     for model_name in MODEL_TIERS:
         try:
@@ -190,7 +197,9 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
-                    response_mime_type="application/json"
+                    response_mime_type="application/json",
+                    response_schema=TriageResponse, # Forces Gemini to return the exact clean schema structure
+                    temperature=0.0
                 )
             )
             
@@ -200,8 +209,9 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 parsed["ai_engine"] = f"Gemini Vision Tier ({model_name})"
                 return parsed
         
-        except Exception as e:
-            print(f"Model {model_name} failed to process matrix: {e}. Moving to next tier...")
+        except Exception as gemini_err:
+            print(f"[Gemini Error on {model_name}]: {gemini_err}")
+            traceback.print_exc() # This will output the precise API crash detail in your terminal logs
             continue
 
     # 4. Final Hard Recovery Block
