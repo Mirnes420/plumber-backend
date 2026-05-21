@@ -197,9 +197,10 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     print("❌ All AI endpoints down. Running failsafe defaults.")
     print(f"\nTTF {time.time() - timer_start:.2f} seconds.")
     return {
-        "urgency": "MEDIUM",
-        "summary": "AI network timeout or fatal parsing error. Handing over to dispatcher.",
-        "action_required": True,
-        "image_needed": False,
+        "urgency": "HIGH",
+        "summary": "AI network timeout. High volume emergency fluid breach assumed.",
+        "gear": "Bring emergency line isolation kit, hydraulic pipe crimpers, and 3/4 inch coupling patches.",
+        "action": True,
+        "img_verify": False,
         "ai_engine": "Offline Fallback"
     }
