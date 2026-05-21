@@ -32,23 +32,18 @@ MODEL_TIERS = [
     "gemini-2.0-flash"
 ]
 
-SYSTEM_PROMPT = """You are an expert plumbing emergency dispatcher. 
-Analyze the customer's message to determine the urgency of the plumbing issue.
+SYSTEM_PROMPT = """You are a plumbing emergency dispatcher. Analyze the customer's message.
 
-URGENCY CATEGORIES:
-- HIGH: Immediate danger or severe damage (e.g., flooding, burst main pipe, sewage backup inside, gas leak smell).
-- MEDIUM: Significant issue but not immediate catastrophe (e.g., slow leak, broken water heater, clogged drain that isn't overflowing).
-- LOW: Minor repairs or maintenance (e.g., dripping faucet, running toilet, scheduling a quote).
+URGENCY: HIGH (flooding, burst main, backup), MEDIUM (slow leak, broken heater), LOW (drip, running toilet).
+GEAR LOGIC: Deduce required tools from the symptoms (e.g., floor flooding = extraction pump; main line backup = cleanout snake/hydro-jet).
 
-If an image is available, evaluate if seeing it is strictly necessary to triage this issue (e.g., an abstract description like "it looks like this" or "take a look at the picture" vs a clear text description like "my kitchen faucet is dripping" or "the pipe is leaking water" or "toilet is clogged").
-
-OUTPUT FORMAT:
-You MUST respond with a valid JSON object only:
+JSON OUTPUT ONLY (No markdown, no extra text):
 {
-    "urgency": "HIGH" | "MEDIUM" | "LOW",
-    "summary": "Short 1-sentence summary of the issue",
-    "action_required": true | false,
-    "image_needed": true | false
+    "urgency": "HIGH|MEDIUM|LOW",
+    "summary": "1-sentence symptom statement.",
+    "gear": "Specific tools/parts to bring.",
+    "action": true|false,
+    "img_verify": true|false
 }"""
 
 OLLAMA_ENDPOINTS = []
@@ -143,7 +138,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
             
             if "urgency" in parsed_json and "summary" in parsed_json:
                 # ROUTING INTERCEPTION
-                if has_image_attached and parsed_json.get("image_needed", False):
+                if has_image_attached and parsed_json.get("img_verify", False):
                     print("🔄 Phi3 indicated that image evaluation is REQUIRED. Aborting Ollama cascade to run Gemini Vision...")
                     break
                 
