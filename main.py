@@ -1,6 +1,20 @@
 import os
 import sys
 import traceback
+
+# Force UTF-8 encoding for standard output and error on Windows
+if sys.platform.startswith("win"):
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
 from fastapi import FastAPI, Request, Response, HTTPException, Form, UploadFile, File
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
@@ -159,11 +173,14 @@ async def whatsapp_webhook(request: Request):
 async def api_incident(
     phone: str = Form(...),
     description: str = Form(...),
+    # ADDED: Form field extraction for name and location
+    location: str = Form(None),
+    customer_name: str = Form(None),
     plumber_id: str = Form(None),
     image: UploadFile = File(None)
 ):
     print(f"\n=================== WEB FORM INBOUND ===================")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Plumber: {plumber_id}")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id}")
     
     try:
         image_bytes = None
@@ -172,8 +189,14 @@ async def api_incident(
             print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
             
         from logic import process_incoming_incident
+        
+        # CHANGED: Passed location and customer_name as keyword arguments into your processing routine
         triage_result, _ = await process_incoming_incident(
-            phone, description, None, 
+            customer_phone=phone, 
+            body=description, 
+            location=location,               # FORWARDED
+            customer_name=customer_name,     # FORWARDED
+            media_url=None, 
             sender_override=None,
             plumber_override=plumber_id,
             image_bytes=image_bytes
@@ -201,7 +224,8 @@ async def api_incident(
         print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
         sys.stdout.flush()
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
-
+    
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
