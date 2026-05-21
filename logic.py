@@ -151,6 +151,14 @@ async def process_incoming_incident(
     
     # 2. Log to Database
     ai_engine_used = triage_result.get("ai_engine", "Unknown")
+    
+    # 🔥 SANITIZATION SCRUBBER: Force gear data into a clean, flat string
+    gear_data = triage_result.get("gear", "Standard diagnostic kit")
+    if isinstance(gear_data, list):
+        gear_str = ", ".join(str(item) for item in gear_data)
+    else:
+        gear_str = str(gear_data) if gear_data else "Standard diagnostic kit"
+
     log_incident(
         customer_phone=customer_phone,
         plumber_phone=target_plumber,
@@ -158,9 +166,10 @@ async def process_incoming_incident(
         summary=summary,
         raw_message=body,
         location=location,
-        customer_name=customer_name,  # ADDED: Pass parameter string down to database.py handler
+        customer_name=customer_name,  
         image_url=media_url,
-        ai_engine=ai_engine_used
+        ai_engine=ai_engine_used,
+        gear=gear_str  # 🔥 Pass the clean string version here
     )
 
     # 3. Notification to Plumber
@@ -194,6 +203,7 @@ async def process_incoming_incident(
             f"🍎 *Navigate (Apple Maps):* {apple_maps_link}\n\n"
 
             f"🛠️ *Issue:* {summary}\n\n"
+            f"🔧🧰 *Recommended Tools/Parts:* {gear_str}\n\n"
             
             f"📞 *Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
         )

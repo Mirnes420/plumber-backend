@@ -72,7 +72,7 @@ finally:
     db_seed.close()
 
 # CHANGED: Added location and customer_name as incoming function parameters
-def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, location: str = None, customer_name: str = None, image_url: str = None, ai_engine: str = None):
+def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, location: str = None, customer_name: str = None, image_url: str = None, ai_engine: str = None, gear: str = None):
     """Logs an incident using SQLAlchemy."""
     db = SessionLocal()
     try:
@@ -85,7 +85,8 @@ def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary:
             location=location,       # ADDED
             customer_name=customer_name, # ADDED
             image_url=image_url,
-            ai_engine=ai_engine
+            ai_engine=ai_engine,
+            gear=gear  # ADDED: Store the recommended tools/parts in the database
         )
         db.add(new_incident)
         db.commit()

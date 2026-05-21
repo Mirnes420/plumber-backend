@@ -8,6 +8,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 import time
+import re
 
 if sys.platform.startswith("win"):
     if hasattr(sys.stdout, "reconfigure"):
@@ -35,13 +36,14 @@ MODEL_TIERS = [
 SYSTEM_PROMPT = """You are a plumbing emergency dispatcher. Analyze the customer's message.
 
 URGENCY: HIGH (flooding, burst main, backup), MEDIUM (slow leak, broken heater), LOW (drip, running toilet).
-GEAR LOGIC: Deduce required tools from the symptoms (e.g., floor flooding = extraction pump; main line backup = cleanout snake/hydro-jet).
+GEAR LOGIC: Deduce required tools from the symptoms as a flat text string.
 
-JSON OUTPUT ONLY (No markdown, no extra text):
+JSON OUTPUT ONLY. DO NOT INCLUDE ANY COMMENTS (e.g., // or /* */) inside the JSON data.
+
 {
     "urgency": "HIGH|MEDIUM|LOW",
     "summary": "1-sentence symptom statement.",
-    "gear": "Specific tools/parts to bring.",
+    "gear": "Specific tools/parts to bring as a single comma-separated text string.",
     "action": true|false,
     "img_verify": true|false
 }"""
@@ -133,6 +135,9 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
             elif "```" in cleaned_content:
                 cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
+            
+            # 🔥 CRITICAL SCRUBBER: Remove JavaScript-style comments before loading JSON
+            cleaned_content = re.sub(r'//.*$', '', cleaned_content, flags=re.MULTILINE)
             
             parsed_json = json.loads(cleaned_content)
             

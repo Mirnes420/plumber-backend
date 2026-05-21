@@ -199,7 +199,7 @@ async def api_incident(
             media_url=None, 
             sender_override=None,
             plumber_override=plumber_id,
-            image_bytes=image_bytes
+            image_bytes=image_bytes,
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")
@@ -216,8 +216,17 @@ async def api_incident(
             payload_type="text",
             content={"body": reply_msg}
         )
+        gear_info = triage_result.get("gear", "Standard kit")
+        if isinstance(gear_info, list):
+            gear_info = ", ".join(str(x) for x in gear_info)
+
         print("✅ Web form registration complete.")
-        return JSONResponse({"status": "success", "urgency": urgency, "summary": summary})
+        return JSONResponse({
+            "status": "success", 
+            "urgency": urgency, 
+            "summary": summary,
+            "gear": gear_info # 🔥 ADD THIS so the Express app receives it
+        })
 
     except Exception as api_err:
         print(f"❌ CRITICAL API_INCIDENT EXCEPTION CRASH:")
@@ -225,7 +234,7 @@ async def api_incident(
         sys.stdout.flush()
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
     
-    
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
