@@ -36,6 +36,7 @@ class Incident(Base):
     image_url = Column(String)
     status = Column(String, default="PENDING")
     ai_engine = Column(String)
+    gear = Column(Text) # 🔥 ADD THIS LINE to store tool parameters
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 class Plumber(Base):
