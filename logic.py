@@ -182,19 +182,20 @@ async def process_incoming_incident(
         encoded_address = urllib.parse.quote_plus(location_text)
 
         # 2. Construct cross-platform universal links
-        google_maps_link = f"https://www.google.com/maps/search/?api=1&query={encoded_address}"
+        google_maps_link = f"https://maps.google.com/?q={encoded_address}"
         apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
         
         full_summary = (
             f"{urgency_emoji} *NEW EMERGENCY ALERT* [{urgency}]\n\n"
-            f"*Customer Name:* {name_text}\n"
-            f"*Address:* {location_text}\n"
+            f"👤 *Customer Name:* {name_text}\n"
+            f"🏠 *Address:* {location_text}\n\n"
+            
             f"📍 *Navigate (Google Maps):* {google_maps_link}\n"
             f"🍎 *Navigate (Apple Maps):* {apple_maps_link}\n\n"
 
-            f"*Issue:* {summary}\n\n"
+            f"🛠️ *Issue:* {summary}\n\n"
             
-            f"*Phone:* {customer_phone}"
+            f"📞 *Phone:* {customer_phone}"
         )
 
         if target_media_url:
