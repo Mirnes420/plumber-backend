@@ -195,7 +195,7 @@ async def process_incoming_incident(
 
             f"🛠️ *Issue:* {summary}\n\n"
             
-            f"📞 *Phone:* {customer_phone}"
+            f"📞 *Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
         )
 
         if target_media_url:
