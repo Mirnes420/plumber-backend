@@ -3,6 +3,7 @@ import sys
 from ai_engine import analyze_triage
 from database import log_incident
 from dotenv import load_dotenv
+import urllib.parse
 
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
@@ -178,12 +179,21 @@ async def process_incoming_incident(
         # CHANGED: Formatted template strings to include name natively inside notifications
         location_text = location if location else "Not provided"
         name_text = customer_name if customer_name else "Not provided"
+        encoded_address = urllib.parse.quote_plus(location_text)
+
+        # 2. Construct cross-platform universal links
+        google_maps_link = f"https://www.google.com/maps/search/?api=1&query={encoded_address}"
+        apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
         
         full_summary = (
             f"{urgency_emoji} *NEW EMERGENCY ALERT* [{urgency}]\n\n"
             f"*Customer Name:* {name_text}\n"
-            f"*Issue:* {summary}\n"
             f"*Address:* {location_text}\n"
+            f"📍 *Navigate (Google Maps):* {google_maps_link}\n"
+            f"🍎 *Navigate (Apple Maps):* {apple_maps_link}\n\n"
+
+            f"*Issue:* {summary}\n\n"
+            
             f"*Phone:* {customer_phone}"
         )
 
