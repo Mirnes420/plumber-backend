@@ -184,7 +184,7 @@ async def process_incoming_incident(
         
         target_media_url = media_url or temp_url
 
-        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "✅"
+        urgency_emoji = "🚨🚨🚨🚨🚨" if urgency == "HIGH" else "⚠️⚠️⚠️" if urgency == "MEDIUM" else "🟢"
         
         # CHANGED: Formatted template strings to include name natively inside notifications
         location_text = location if location else "Not provided"
@@ -196,7 +196,7 @@ async def process_incoming_incident(
         apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
         
         full_summary = (
-            f"{urgency_emoji * 7} \n"
+            f"{urgency_emoji} \n"
             f" *NEW EMERGENCY ALERT* [{urgency}]\n\n"
             f"👤 *Customer Name:* {name_text}\n"
             f"🏠 *Address:* {location_text}\n\n"
