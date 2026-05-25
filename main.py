@@ -177,10 +177,12 @@ async def api_incident(
     location: str = Form(None),
     customer_name: str = Form(None),
     plumber_id: str = Form(None),
-    image: UploadFile = File(None)
+    image: UploadFile = File(None),
+    demo: str = Form(None)
 ):
     print(f"\n=================== WEB FORM INBOUND ===================")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id}")
+    is_demo = (demo == "true")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Demo Mode: {is_demo}")
     
     try:
         image_bytes = None
@@ -200,6 +202,7 @@ async def api_incident(
             sender_override=None,
             plumber_override=plumber_id,
             image_bytes=image_bytes,
+            demo=is_demo,
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")

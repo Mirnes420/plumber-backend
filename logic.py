@@ -117,12 +117,13 @@ async def process_incoming_incident(
     media_url: str = None, 
     sender_override: str = None, 
     image_bytes: bytes = None, 
-    plumber_override: str = None
+    plumber_override: str = None,
+    demo: bool = False
 ):
     """
     Core logic to handle an incoming plumbing request.
     """
-    print(f"Processing incident from {customer_name or 'Unknown'} ({customer_phone})")
+    print(f"Processing incident from {customer_name or 'Unknown'} ({customer_phone}) | Demo Mode: {demo}")
     
     # 0. Plumber Lookup
     target_plumber = None
@@ -145,7 +146,7 @@ async def process_incoming_incident(
         print(f"ℹ️ Routing to target plumber: {target_plumber}")
     
     # 1. AI Triage
-    triage_result = await analyze_triage(body, media_url, image_bytes)
+    triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo)
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
     

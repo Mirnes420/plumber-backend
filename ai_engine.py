@@ -95,8 +95,8 @@ async def query_ollama_stream(url: str, payload: dict) -> str:
                 raise Exception(f"HTTP {response.status_code}")
     return assistant_content.strip()
 
-async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None):
-    print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...'")
+async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None, demo: bool = False):
+    print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...' | demo mode: {demo}")
     print("Starting the timer")
     timer_start = time.time()
     
@@ -110,52 +110,60 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     ollama_success = False
     parsed_json = None
     
-    for ollama_url in OLLAMA_ENDPOINTS:
-        try:
-            print(f"Attempting text-based filtering with Ollama endpoint: {ollama_url}...")
-            model_name = "phi3:mini"
-            
-            # Use presence indicators since background download hasn't finished yet
-            has_image_attached = True if (img_data or image_url) else False
-            image_presence_context = "An image was attached by the user." if has_image_attached else "No image was attached."
-            user_content = f"{SYSTEM_PROMPT}\n\nContext: {image_presence_context}\nCustomer Message: {text}"
-            
-            payload = {
-                "model": model_name,
-                "messages": [{"role": "user", "content": user_content}],
-                "stream": True
-            }
-            
-            print("Sending text payload to Phi3...")
-            raw_response = await query_ollama_stream(ollama_url, payload)
-            print(f"Ollama raw output: {raw_response}")
-            
-            cleaned_content = raw_response
-            if "```json" in cleaned_content:
-                cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
-            elif "```" in cleaned_content:
-                cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
-            
-            # 🔥 CRITICAL SCRUBBER: Remove JavaScript-style comments before loading JSON
-            cleaned_content = re.sub(r'//.*$', '', cleaned_content, flags=re.MULTILINE)
-            
-            parsed_json = json.loads(cleaned_content)
-            
-            if "urgency" in parsed_json and "summary" in parsed_json:
-                # ROUTING INTERCEPTION
-                if has_image_attached and parsed_json.get("img_verify", False):
-                    print("🔄 Phi3 indicated that image evaluation is REQUIRED. Aborting Ollama cascade to run Gemini Vision...")
+    if not demo:
+        for ollama_url in OLLAMA_ENDPOINTS:
+            try:
+                print(f"Attempting text-based filtering with Ollama endpoint: {ollama_url}...")
+                model_name = "phi3:mini"
+                
+                # Use presence indicators since background download hasn't finished yet
+                has_image_attached = True if (img_data or image_url) else False
+                image_presence_context = "An image was attached by the user." if has_image_attached else "No image was attached."
+                user_content = f"{SYSTEM_PROMPT}\n\nContext: {image_presence_context}\nCustomer Message: {text}"
+                
+                payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": user_content}],
+                    "stream": True
+                }
+                
+                print("Sending text payload to Phi3...")
+                raw_response = await query_ollama_stream(ollama_url, payload)
+                print(f"Ollama raw output: {raw_response}")
+                
+                cleaned_content = raw_response
+                if "```json" in cleaned_content:
+                    cleaned_content = cleaned_content.split("```json")[1].split("```")[0].strip()
+                elif "```" in cleaned_content:
+                    cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
+                
+                # 🔥 CRITICAL SCRUBBER: Remove JavaScript-style comments before loading JSON
+                cleaned_content = re.sub(r'//.*$', '', cleaned_content, flags=re.MULTILINE)
+                
+                parsed_json = json.loads(cleaned_content)
+                
+                if "urgency" in parsed_json and "summary" in parsed_json:
+                    # ROUTING INTERCEPTION
+                    if has_image_attached and parsed_json.get("img_verify", False):
+                        print("🔄 Phi3 indicated that image evaluation is REQUIRED. Aborting Ollama cascade to run Gemini Vision...")
+                        break
+                    
+                    print("✅ Ollama triage successful (Image analysis skipped or unneeded).")
+                    parsed_json["ai_engine"] = f"Ollama ({model_name} @ {ollama_url})"
+                    ollama_success = True
                     break
-                
-                print("✅ Ollama triage successful (Image analysis skipped or unneeded).")
-                parsed_json["ai_engine"] = f"Ollama ({model_name} @ {ollama_url})"
-                ollama_success = True
-                break
-            else:
-                print("⚠️ Ollama response structure was invalid.")
-                
-        except Exception as ollama_err:
-            print(f"⚠️ Ollama endpoint failed: {ollama_err}")
+                else:
+                    print("⚠️ Ollama response structure was invalid.")
+                    
+            except Exception as ollama_err:
+                import traceback
+                print(f"⚠️ Ollama endpoint failed processing. Error Details:")
+                print(f"Type: {type(ollama_err).__name__}")
+                print(f"Message: {ollama_err}")
+                # This prints the full trace so you see exactly which line broke:
+                traceback.print_exc()
+    else:
+        print("DEBUG: Demo mode active. Skipping Ollama cascade and routing directly to Gemini.")
 
     if ollama_success and parsed_json:
         # Cancel live background task if Ollama processed everything via text alone
