@@ -2,3 +2,6 @@
 env/
 .env.example
 plumber-customer-app/
+wbot/
+__pycache__/
+*.pyc

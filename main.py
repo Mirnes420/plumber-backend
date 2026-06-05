@@ -173,16 +173,16 @@ async def whatsapp_webhook(request: Request):
 async def api_incident(
     phone: str = Form(...),
     description: str = Form(...),
-    # ADDED: Form field extraction for name and location
     location: str = Form(None),
     customer_name: str = Form(None),
     plumber_id: str = Form(None),
     image: UploadFile = File(None),
-    demo: str = Form(None)
+    demo: str = Form(None),
+    professional_type: str = Form(None)
 ):
     print(f"\n=================== WEB FORM INBOUND ===================")
     is_demo = (demo == "true")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Demo Mode: {is_demo}")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Type: {professional_type or 'plumber'} | Demo Mode: {is_demo}")
     
     try:
         image_bytes = None
@@ -196,13 +196,14 @@ async def api_incident(
         triage_result, _ = await process_incoming_incident(
             customer_phone=phone, 
             body=description, 
-            location=location,               # FORWARDED
-            customer_name=customer_name,     # FORWARDED
+            location=location,
+            customer_name=customer_name,
             media_url=None, 
             sender_override=None,
             plumber_override=plumber_id,
             image_bytes=image_bytes,
             demo=is_demo,
+            professional_type=professional_type or 'plumber',
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")
