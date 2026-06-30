@@ -168,7 +168,47 @@ async def whatsapp_webhook(request: Request):
         sys.stdout.flush() # Force log buffer write immediately into Render's stream
         return JSONResponse({"status": "internal_error", "detail": str(global_err)}, status_code=500)
 
+"""
+we will need something like this for line
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+import httpx
+import os
+
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
+
+@app.post("/line/webhook")
+async def line_webhook(request: Request):
+    body = await request.json()
+    print("LINE webhook event:", body)
+
+    # LINE sends events in an array under "events"
+    for event in body.get("events", []):
+        if event.get("type") == "message":
+            user_id = event["source"]["userId"]
+            text = event["message"].get("text", "")
+
+            # Example: echo back the message
+            reply_token = event["replyToken"]
+            reply_payload = {
+                "replyToken": reply_token,
+                "messages": [{"type": "text", "text": f"You said: {text}"}]
+            }
+
+            headers = {
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://api.line.me/v2/bot/message/reply",
+                    headers=headers,
+                    json=reply_payload
+                )
+
+    return JSONResponse({"status": "ok"})
+"""
 @app.post("/api/incident")
 async def api_incident(
     phone: str = Form(...),
