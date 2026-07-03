@@ -10,6 +10,11 @@ from dotenv import load_dotenv
 import time
 import re
 
+# ==============================================================================
+# 1. RUNTIME ENVIRONMENT CONFIGURATION
+# ==============================================================================
+# Force standard output channels to process UTF-8 characters properly. This prevents
+# terminal rendering crashes on Windows machines when handling emojis or symbols.
 if sys.platform.startswith("win"):
     if hasattr(sys.stdout, "reconfigure"):
         try: sys.stdout.reconfigure(encoding="utf-8")
@@ -24,8 +29,15 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY must be set in .env")
 
+# Initialize the stateful Google GenAI client layer
 client = genai.Client(api_key=GOOGLE_API_KEY)
 
+# ==============================================================================
+# 2. MODEL ROUTING & FAILOVER TOPOLOGY
+# ==============================================================================
+# Multi-tiered fallback array. If an upstream low-latency model experiences rate limits 
+# (HTTP 429) or transient server errors (HTTP 5xx), the execution circuit backs off 
+# exponentially before shifting load down to alternative cluster targets.
 MODEL_TIERS = [
     "gemini-2.5-flash-lite",
     "gemini-2.0-flash-lite",
@@ -33,6 +45,9 @@ MODEL_TIERS = [
     "gemini-2.0-flash"
 ]
 
+# ==============================================================================
+# 3. DOMAIN-SPECIFIC EXPERT PROMPTS
+# ==============================================================================
 SYSTEM_PROMPTS = {
     "plumber": """You are an emergency plumbing dispatcher. Analyze the customer's plumbing issue.
 
@@ -92,9 +107,12 @@ JSON OUTPUT ONLY. DO NOT INCLUDE ANY COMMENTS (e.g., // or /* */) inside the JSO
 }"""
 }
 
-# Backward-compat alias used by Ollama path
+# Legacy backward-compatibility mapping
 SYSTEM_PROMPT = SYSTEM_PROMPTS["plumber"]
 
+# ==============================================================================
+# 4. NETWORK INGESTION GATEWAYS (OLLAMA & HTTPX)
+# ==============================================================================
 OLLAMA_ENDPOINTS = []
 primary_env_url = os.getenv("LOCAL_OLLAMA_API") or os.getenv("OLLAMA_CHAT_URL")
 if primary_env_url:
@@ -104,9 +122,8 @@ public_fallback = "https://ai.gentlemansolutions.com/api/chat"
 if public_fallback not in OLLAMA_ENDPOINTS:
     OLLAMA_ENDPOINTS.append(public_fallback)
 
-
 async def download_image_async(image_url: str) -> bytes:
-    """Asynchronously download image bytes down a standalone thread."""
+    """Non-blocking asynchronous task execution to download raw image binary data."""
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         async with httpx.AsyncClient(follow_redirects=True, headers=headers, timeout=10.0) as client_httpx:
@@ -117,8 +134,8 @@ async def download_image_async(image_url: str) -> bytes:
         print(f"Background image download error: {e}")
     return None
 
-
 async def query_ollama_stream(url: str, payload: dict) -> str:
+    """Streams and builds text inference payloads out of local model layers."""
     assistant_content = ""
     async with httpx.AsyncClient(timeout=30.0) as client_httpx:
         async with client_httpx.stream("POST", url, json=payload) as response:
@@ -142,16 +159,23 @@ async def query_ollama_stream(url: str, payload: dict) -> str:
                 raise Exception(f"HTTP {response.status_code}")
     return assistant_content.strip()
 
+# ==============================================================================
+# 5. CORE TRIAGE ENGINE WITH EXPONENTIAL BACKOFF RETRY CIRCUITS
+# ==============================================================================
 async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None, demo: bool = False, professional_type: str = 'plumber'):
+    """
+    Orchestrates automated incoming tickets. Attempts rapid classification via
+    local models, falling back to a cloud-based Gemini cluster wrapped with 
+    asynchronous exponential backoff mechanics.
+    """
     print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...' | professional_type: {professional_type} | demo mode: {demo}")
     print("Starting the timer")
     timer_start = time.time()
     
-    # Select the correct system prompt based on professional type
     system_prompt = SYSTEM_PROMPTS.get(professional_type, SYSTEM_PROMPTS["plumber"])
     print(f"DEBUG: Using system prompt for professional type: '{professional_type}'")
     
-    # Fire off background image fetch task instantly without blocking execution
+    # Non-blocking image fetching thread startup
     image_download_task = None
     img_data = image_bytes
 
@@ -167,7 +191,6 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 print(f"Attempting text-based filtering with Ollama endpoint: {ollama_url}...")
                 model_name = "phi3:mini"
                 
-                # Use presence indicators since background download hasn't finished yet
                 has_image_attached = True if (img_data or image_url) else False
                 image_presence_context = "An image was attached by the user." if has_image_attached else "No image was attached."
                 user_content = f"{system_prompt}\n\nContext: {image_presence_context}\nCustomer Message: {text}"
@@ -188,13 +211,10 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 elif "```" in cleaned_content:
                     cleaned_content = cleaned_content.split("```")[1].split("```")[0].strip()
                 
-                # 🔥 CRITICAL SCRUBBER: Remove JavaScript-style comments before loading JSON
                 cleaned_content = re.sub(r'//.*$', '', cleaned_content, flags=re.MULTILINE)
-                
                 parsed_json = json.loads(cleaned_content)
                 
                 if "urgency" in parsed_json and "summary" in parsed_json:
-                    # ROUTING INTERCEPTION
                     if has_image_attached and parsed_json.get("img_verify", False):
                         print("🔄 Phi3 indicated that image evaluation is REQUIRED. Aborting Ollama cascade to run Gemini Vision...")
                         break
@@ -211,19 +231,17 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 print(f"⚠️ Ollama endpoint failed processing. Error Details:")
                 print(f"Type: {type(ollama_err).__name__}")
                 print(f"Message: {ollama_err}")
-                # This prints the full trace so you see exactly which line broke:
                 traceback.print_exc()
     else:
         print("DEBUG: Demo mode active. Skipping Ollama cascade and routing directly to Gemini.")
 
     if ollama_success and parsed_json:
-        # Cancel live background task if Ollama processed everything via text alone
         if image_download_task and not image_download_task.done():
             image_download_task.cancel()
         print(f"\nTTF {time.time() - timer_start:.2f} seconds.")
         return parsed_json
 
-    # Await image download resolution only when Gemini Vision route is forced
+    # Wait for the background image task if execution forced cloud fallback pipeline
     if image_download_task:
         print("Waiting for pending background image download to resolve...")
         img_data = await image_download_task
@@ -235,7 +253,12 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
         image_part = types.Part.from_bytes(data=img_data, mime_type="image/jpeg")
         contents.append(image_part)
 
-    for model_name in MODEL_TIERS:
+    # --------------------------------------------------------------------------
+    # EXPONENTIAL BACKOFF ROUTING CORE
+    # --------------------------------------------------------------------------
+    base_delay = 1.5  # The initial pause multiplier (in seconds)
+    
+    for attempt_idx, model_name in enumerate(MODEL_TIERS):
         try:
             print(f"Attempting analysis with {model_name}...")
             response = client.models.generate_content(
@@ -255,9 +278,21 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 return parsed
         
         except Exception as e:
-            print(f"Model {model_name} failed: {e}. Advancing down the cluster...")
+            # Backoff calculation formula: delay = base_delay * (2 ^ attempt_index)
+            # Scaling profile: Attempt 0 = 1.5s | Attempt 1 = 3.0s | Attempt 2 = 6.0s
+            calculated_delay = base_delay * (2 ** attempt_idx)
+            
+            print(f"⚠️ Model {model_name} failed execution profile due to: {e}.")
+            
+            # Do not hold the main thread sleeping if we just failed the final model tier
+            if model_name != MODEL_TIERS[-1]:
+                print(f"⏳ Backing off system for {calculated_delay:.2f} seconds before falling back to next model...")
+                await asyncio.sleep(calculated_delay)
             continue
 
+    # ==============================================================================
+    # 6. FAILSAFE HARDWARE STRATEGY (Offline Fallback Layer)
+    # ==============================================================================
     print("❌ All AI endpoints down. Running failsafe defaults.")
     print(f"\nTTF {time.time() - timer_start:.2f} seconds.")
     return {
