@@ -2,6 +2,10 @@
 env/
 .env.example
 plumber-customer-app/
+plumber-landing/
+triagedemo/
+working)ai_gemini.py
+keepalive.py
 wbot/
 __pycache__/
 *.pyc

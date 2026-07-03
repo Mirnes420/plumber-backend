@@ -15,26 +15,27 @@ if sys.platform.startswith("win"):
         except Exception:
             pass
 
-from fastapi import FastAPI, Request, Response, HTTPException, Form, UploadFile, File
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-import json
-from ai_engine import analyze_triage
-from database import log_incident
-from logic import send_whatsapp_message, process_incoming_incident
+from logic import send_whatsapp_message
 
+# load our local environment from .env
 load_dotenv()
 
 app = FastAPI(title="WhatsApp Emergency Triage Bot")
 
+# here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 
+# health check 
 @app.get("/")
 async def root():
     print("DEBUG: Root health check hit!")
     return {"status": "running", "service": "Plumbing Triage Bot"}
 
+# webhook endpoint, accepts slashes at the end
 @app.post("/webhook")
 @app.post("/webhook/") 
 async def whatsapp_webhook(request: Request):
@@ -81,6 +82,7 @@ async def whatsapp_webhook(request: Request):
             incidents = get_incidents()
             print(f"DEBUG: Total database incidents retrieved: {len(incidents)}")
 
+            # defining emergency emojis
             if body_upper in ["URGENT", "EMERGENCY"]:
                 print("🚨 Routing to High-Priority Alert Pipeline")
                 filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
@@ -149,6 +151,8 @@ async def whatsapp_webhook(request: Request):
         summary = triage_result.get("summary", "")
         print(f"DEBUG: AI Processing Complete. Urgency: {urgency} | Summary length: {len(summary)}")
 
+        # message to customer
+
         if urgency == "HIGH":
             reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now."
         else:
@@ -169,7 +173,7 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "internal_error", "detail": str(global_err)}, status_code=500)
 
 """
-we will need something like this for line
+we will need something like this for line integration
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -209,6 +213,7 @@ async def line_webhook(request: Request):
 
     return JSONResponse({"status": "ok"})
 """
+# here we handle new incidents
 @app.post("/api/incident")
 async def api_incident(
     phone: str = Form(...),
@@ -220,6 +225,8 @@ async def api_incident(
     demo: str = Form(None),
     professional_type: str = Form(None)
 ):
+
+    # check if demo mode is enabled
     print(f"\n=================== WEB FORM INBOUND ===================")
     is_demo = (demo == "true")
     print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Type: {professional_type or 'plumber'} | Demo Mode: {is_demo}")
@@ -265,11 +272,12 @@ async def api_incident(
             gear_info = ", ".join(str(x) for x in gear_info)
 
         print("✅ Web form registration complete.")
+        # send the structured json as a message
         return JSONResponse({
             "status": "success", 
             "urgency": urgency, 
             "summary": summary,
-            "gear": gear_info # 🔥 ADD THIS so the Express app receives it
+            "gear": gear_info
         })
 
     except Exception as api_err:
