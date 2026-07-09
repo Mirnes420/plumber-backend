@@ -4,6 +4,9 @@ from ai_engine import analyze_triage
 from database import log_incident
 from dotenv import load_dotenv
 import urllib.parse
+from twilio.rest import Client
+import os
+
 
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
@@ -26,6 +29,45 @@ import httpx
 # WBOT Config
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
+
+
+
+
+
+# twillio implementation for sending messages to plumbers (for later)
+def send_dispatch_alert(target_plumber, full_summary, static_map_url=None):
+
+    client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+
+    # Try WhatsApp first
+    try:
+        message = client.messages.create(
+            from_=f"whatsapp:{os.getenv('TWILIO_WHATSAPP_NUMBER')}",
+            to=f"whatsapp:{target_plumber}",
+            body=full_summary,
+            media_url=[static_map_url] if static_map_url else None
+        )
+        return {"channel": "whatsapp", "sid": message.sid, "status": message.status}
+
+    except Exception as whatsapp_error:
+        print(f"WhatsApp send failed: {whatsapp_error}")
+
+        # Fallback to SMS/MMS
+        try:
+            message = client.messages.create(
+                from_=os.getenv("TWILIO_SMS_NUMBER"),  # plain E.164 number, no 'whatsapp:' prefix
+                to=target_plumber,
+                body=full_summary,
+                media_url=[static_map_url] if static_map_url else None
+            )
+            return {"channel": "sms", "sid": message.sid, "status": message.status}
+
+        except Exception as sms_error:
+            print(f"SMS fallback also failed: {sms_error}")
+            return {"channel": None, "error": str(sms_error)}
+    
+    
+    
 
 async def upload_to_tmp(image_bytes: bytes) -> str:
     """Uploads bytes to a temporary public URL so Twilio can fetch it."""
@@ -186,7 +228,7 @@ async def process_incoming_incident(
         
         target_media_url = media_url or temp_url
 
-        urgency_emoji = "🚨🚨🚨🚨🚨" if urgency == "HIGH" else "⚠️⚠️⚠️" if urgency == "MEDIUM" else "🟢"
+        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "🟢"
         
         # CHANGED: Formatted template strings to include name natively inside notifications
         location_text = location if location else "Not provided"
@@ -198,21 +240,26 @@ async def process_incoming_incident(
         apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
         
         full_summary = (
-            f"{urgency_emoji} \n"
-            f" *NEW EMERGENCY ALERT* [{urgency}]\n\n"
-            f"👤 *Customer Name:* {name_text}\n"
-            f"🏠 *Address:* {location_text}\n\n"
+            "\n"
+            "\n"
+            f" *{urgency_emoji}NEW EMERGENCY ALERT* [{urgency}]\n\n"
+            f"*Customer Name:* {name_text}\n"
+            f"*Address:* {location_text}\n\n"
             
-            f"📍 *Navigate (Google Maps):* {google_maps_link}\n"
-            f"🍎 *Navigate (Apple Maps):* {apple_maps_link}\n\n"
+            f"*Navigate (Google Maps):* {google_maps_link}\n"
+            f"*Navigate (Apple Maps):* {apple_maps_link}\n\n"
 
-            f"🛠️ *Issue:* {summary}\n\n"
-            f"🔧🧰 *Recommended Tools/Parts:* {gear_str}\n\n"
+            f"*Issue:* {summary}\n\n"
+            f"*Recommended Tools/Parts:* {gear_str}\n\n"
             
-            f"📞 *Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
+            f"*Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
+            "\n"
+            "\n"
         )
 
         if target_media_url:
+            """await send_dispatch_alert(target_plumber, full_summary):
+                          """
             await send_whatsapp_message(
                 to=target_plumber,
                 payload_type="image",
