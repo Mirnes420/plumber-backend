@@ -23,7 +23,7 @@ from logic import send_whatsapp_message
 # load our local environment from .env
 load_dotenv()
 
-app = FastAPI(title="WhatsApp Emergency Triage Bot")
+app = FastAPI(title="Coherzo")
 
 # here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
@@ -33,7 +33,7 @@ PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 @app.get("/")
 async def root():
     print("DEBUG: Root health check hit!")
-    return {"status": "running", "service": "Plumbing Triage Bot"}
+    return {"status": "running", "service": "Coherzo"}
 
 # webhook endpoint, accepts slashes at the end
 @app.post("/webhook")

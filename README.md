@@ -1,6 +1,6 @@
-# WhatsApp Emergency Triage Bot 🚰
+# Coherzo 🚰
 
-A production-ready AI-powered triage system for plumbing businesses. It uses Google Gemini 1.5 Pro to analyze incoming WhatsApp messages (text + images) and classify them by urgency.
+An AI-powered emergency dispatch system for home service businesses. It uses Google Gemini to analyze incoming requests (text + images) and classify them by urgency, routing structured incident reports directly to professionals via WhatsApp.
 
 ## Features
 - **AI Triage**: Automatically determines if a request is HIGH, MEDIUM, or LOW urgency.
