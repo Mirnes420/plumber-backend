@@ -47,6 +47,7 @@ class Plumber(Base):
     plumber_phone = Column(String)
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
+    password_hash = Column(Text, nullable=True) # Added for password authentication
 
 class WhatsAppAuth(Base):
     __tablename__ = "whatsapp_auth_store"

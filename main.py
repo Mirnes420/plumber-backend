@@ -15,10 +15,15 @@ if sys.platform.startswith("win"):
         except Exception:
             pass
 
-from fastapi import FastAPI, Request, Form, UploadFile, File
+from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from logic import send_whatsapp_message
+import bcrypt
+import jwt as pyjwt
+from datetime import datetime, timedelta, timezone
+from pydantic import BaseModel
 
 # load our local environment from .env
 load_dotenv()
@@ -290,3 +295,203 @@ async def api_incident(
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+# ==============================================================================
+# ADMIN AUTHENTICATION & DASHBOARD ENDPOINTS
+# ==============================================================================
+
+_ADMIN_JWT_SECRET = os.getenv("ADMIN_JWT_SECRET", "coherzo_admin_dev_secret_change_in_prod")
+_ADMIN_JWT_ALGO = "HS256"
+
+class AdminSetPasswordRequest(BaseModel):
+    phone: str
+    password: str
+
+class AdminLoginRequest(BaseModel):
+    phone: str
+    password: str
+
+class AdminStatusRequest(BaseModel):
+    id: str
+    status: str
+
+def _clean_phone(phone: str) -> str:
+    return "".join(c for c in phone if c.isdigit())
+
+def _issue_admin_token(payload: dict) -> str:
+    payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=24)
+    return pyjwt.encode(payload, _ADMIN_JWT_SECRET, algorithm=_ADMIN_JWT_ALGO)
+
+def _verify_admin_token(token: str) -> dict:
+    try:
+        return pyjwt.decode(token, _ADMIN_JWT_SECRET, algorithms=[_ADMIN_JWT_ALGO])
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+async def _get_current_admin(request: Request) -> dict:
+    """Reads JWT from Authorization header OR from admin_token cookie."""
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        token = request.cookies.get("admin_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return _verify_admin_token(token)
+
+
+@app.post("/admin/set-password")
+async def admin_set_password(body: AdminSetPasswordRequest):
+    """Set or update password for an existing plumber using their registered phone."""
+    if not body.password or len(body.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    clean = _clean_phone(body.phone)
+    print(f"admin set-password: raw='{body.phone}' clean='{clean}'")
+
+    from database import SessionLocal, Plumber
+    db = SessionLocal()
+    try:
+        plumber = db.query(Plumber).filter(Plumber.plumber_phone == clean).first()
+        if not plumber:
+            # Show registered phones in error so user knows what to type
+            all_plumbers = db.query(Plumber).all()
+            phones = ", ".join(f"{p.name}: {p.plumber_phone}" for p in all_plumbers) or "none"
+            raise HTTPException(
+                status_code=404,
+                detail=f"Phone '{clean}' not found. Registered phones: {phones}"
+            )
+        hashed = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+        plumber.password_hash = hashed
+        db.commit()
+        print(f"admin set-password success for {plumber.name} ({clean})")
+        return {"success": True, "name": plumber.name}
+    finally:
+        db.close()
+
+
+@app.post("/admin/login")
+async def admin_login(body: AdminLoginRequest, request: Request):
+    """Login: phone + password (or 'admin' + ADMIN_MASTER_PASSWORD for master access)."""
+    master_pwd = os.getenv("ADMIN_MASTER_PASSWORD")
+
+    # Master admin bypass
+    if body.phone.strip().lower() == "admin":
+        if not master_pwd:
+            raise HTTPException(status_code=401, detail="ADMIN_MASTER_PASSWORD is not set. Add it to your environment variables.")
+        if body.password != master_pwd:
+            raise HTTPException(status_code=401, detail="Incorrect master password.")
+        token = _issue_admin_token({"id": "master", "name": "Master Admin", "phone": "ALL", "isMaster": True})
+        return {"success": True, "name": "Master Admin", "token": token}
+
+    # Plumber login
+    clean = _clean_phone(body.phone)
+    from database import SessionLocal, Plumber
+    db = SessionLocal()
+    try:
+        plumber = db.query(Plumber).filter(Plumber.plumber_phone == clean).first()
+        if not plumber:
+            raise HTTPException(status_code=401, detail="Phone not found. Use 'admin' for master access.")
+        if not plumber.password_hash:
+            raise HTTPException(status_code=401, detail="No password set. Use the Set Password option first.", headers={"X-Needs-Password": "true"})
+        if not bcrypt.checkpw(body.password.encode(), plumber.password_hash.encode()):
+            raise HTTPException(status_code=401, detail="Invalid credentials.")
+        token = _issue_admin_token({"id": plumber.id, "name": plumber.name, "phone": plumber.plumber_phone, "isMaster": False})
+        return {"success": True, "name": plumber.name, "token": token}
+    finally:
+        db.close()
+
+
+@app.get("/admin/me")
+async def admin_me(request: Request):
+    """Check current session."""
+    user = await _get_current_admin(request)
+    return {"name": user["name"], "phone": user["phone"]}
+
+
+@app.get("/admin/plumbers")
+async def admin_list_plumbers(request: Request):
+    """Debug: list all registered plumbers and whether they have a password set."""
+    from database import SessionLocal, Plumber
+    db = SessionLocal()
+    try:
+        plumbers = db.query(Plumber).order_by(Plumber.id).all()
+        return {"plumbers": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "plumber_phone": p.plumber_phone,
+                "active": p.active,
+                "has_password": bool(p.password_hash)
+            } for p in plumbers
+        ]}
+    finally:
+        db.close()
+
+
+@app.get("/admin/incidents")
+async def admin_incidents(request: Request,
+                          urgency: str = None,
+                          status: str = None,
+                          from_date: str = None,
+                          to_date: str = None):
+    """Return incidents filtered by plumber or all (master admin)."""
+    user = await _get_current_admin(request)
+    is_master = user.get("isMaster", False)
+    plumber_phone = user.get("phone")
+
+    from database import SessionLocal, Incident
+    from sqlalchemy import and_
+    db = SessionLocal()
+    try:
+        q = db.query(Incident)
+        if not is_master:
+            q = q.filter(Incident.plumber_phone == plumber_phone)
+        if urgency and urgency != "ALL":
+            q = q.filter(Incident.urgency == urgency)
+        if status and status != "ALL":
+            q = q.filter(Incident.status == status)
+        if from_date:
+            q = q.filter(Incident.timestamp >= datetime.fromisoformat(from_date))
+        if to_date:
+            q = q.filter(Incident.timestamp <= datetime.fromisoformat(to_date + "T23:59:59"))
+        incidents = q.order_by(Incident.timestamp.desc()).limit(200).all()
+        return {"incidents": [
+            {
+                "id": i.id,
+                "customer_phone": i.customer_phone,
+                "plumber_phone": i.plumber_phone,
+                "urgency": i.urgency,
+                "summary": i.summary,
+                "raw_message": i.raw_message,
+                "location": i.location,
+                "customer_name": i.customer_name,
+                "image_url": i.image_url,
+                "status": i.status,
+                "gear": i.gear,
+                "timestamp": i.timestamp.isoformat() if i.timestamp else None,
+            } for i in incidents
+        ]}
+    finally:
+        db.close()
+
+
+@app.patch("/admin/incident-status")
+async def admin_update_status(body: AdminStatusRequest, request: Request):
+    """Update incident status (PENDING / RESOLVED)."""
+    await _get_current_admin(request)  # auth check
+    if body.status not in ("PENDING", "RESOLVED"):
+        raise HTTPException(status_code=400, detail="status must be PENDING or RESOLVED")
+    from database import SessionLocal, Incident
+    db = SessionLocal()
+    try:
+        incident = db.query(Incident).filter(Incident.id == body.id).first()
+        if not incident:
+            raise HTTPException(status_code=404, detail="Incident not found")
+        incident.status = body.status
+        db.commit()
+        return {"success": True}
+    finally:
+        db.close()
