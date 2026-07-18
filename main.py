@@ -71,23 +71,21 @@ def pqc_hash_password(password: str) -> str:
     return combined.hex()
 
 def pqc_verify_password(password: str, stored_hash_hex: str) -> bool:
-    """
-    Verify a password against a quantum‑safe hash.
-    Returns True if password matches.
-    """
     try:
         combined = bytes.fromhex(stored_hash_hex)
-        # Split: ciphertext_key_packet (len=?) | nonce (12) | encrypted_password (rest)
-        # ML‑KEM ciphertext length depends on the parameter set; adjust as needed
-        # For ML‑KEM‑1024, ciphertext is 1568 bytes
-        ciphertext_key_packet = combined[:1568]
-        nonce = combined[1568:1568+12]
-        encrypted_password = combined[1568+12:]
         
-        # 1. Decapsulate shared secret
+        # 1. Extract ciphertext_key_packet: use the length from kem_engine.encaps
+        #    (or store the length alongside the hash if the lib doesn’t expose it)
+        #    For now, assume ML‑KEM‑1024: 1568 bytes
+        ciphertext_len = 1568  # adjust if your ML‑KEM parameter set differs
+        ciphertext_key_packet = combined[:ciphertext_len]
+        nonce = combined[ciphertext_len:ciphertext_len+12]
+        encrypted_password = combined[ciphertext_len+12:]
+        
+        # 2. Decapsulate shared secret
         shared_secret = kem_engine.decaps(DECRYPTION_KEY, ciphertext_key_packet)
         
-        # 2. Derive AES key
+        # 3. Derive AES key
         hkdf = HKDF(
             algorithm=SHA256(),
             length=32,
@@ -96,14 +94,13 @@ def pqc_verify_password(password: str, stored_hash_hex: str) -> bool:
         )
         aes_key = hkdf.derive(shared_secret)
         
-        # 3. Decrypt
+        # 4. Decrypt
         aesgcm = AESGCM(aes_key)
         decrypted_password = aesgcm.decrypt(nonce, encrypted_password, None)
         
         return decrypted_password.decode('utf-8') == password
     except Exception:
         return False
-
 # health check 
 @app.get("/")
 async def root():
