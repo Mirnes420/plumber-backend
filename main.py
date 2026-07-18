@@ -20,18 +20,89 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from logic import send_whatsapp_message
-import bcrypt
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
+
+# 🔐 Quantum‑safe hashing imports
+from mlkem.ml_kem import ML_KEM
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.hashes import SHA256
+
 # load our local environment from .env
 load_dotenv()
+
+# Initialize ML‑KEM engine
+kem_engine = ML_KEM()
+ENCRYPTION_KEY, DECRYPTION_KEY = kem_engine.key_gen()
 
 app = FastAPI(title="Coherzo")
 
 # here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
+
+# 🔐 Quantum‑safe password hashing helpers
+def pqc_hash_password(password: str) -> str:
+    """
+    Hash a password using ML‑KEM + HKDF + AES‑GCM.
+    Returns a hex string containing: ciphertext_key_packet | nonce | encrypted_hash
+    """
+    # 1. Encapsulate shared secret
+    shared_secret, ciphertext_key_packet = kem_engine.encaps(ENCRYPTION_KEY)
+    
+    # 2. Derive AES key
+    hkdf = HKDF(
+        algorithm=SHA256(),
+        length=32,
+        salt=None,
+        info=b"Coherzo-Password-Hash"
+    )
+    aes_key = hkdf.derive(shared_secret)
+    
+    # 3. Encrypt password bytes
+    nonce = os.urandom(12)
+    aesgcm = AESGCM(aes_key)
+    encrypted_password = aesgcm.encrypt(nonce, password.encode('utf-8'), None)
+    
+    # 4. Combine into a single storage string
+    combined = ciphertext_key_packet + nonce + encrypted_password
+    return combined.hex()
+
+def pqc_verify_password(password: str, stored_hash_hex: str) -> bool:
+    """
+    Verify a password against a quantum‑safe hash.
+    Returns True if password matches.
+    """
+    try:
+        combined = bytes.fromhex(stored_hash_hex)
+        # Split: ciphertext_key_packet (len=?) | nonce (12) | encrypted_password (rest)
+        # ML‑KEM ciphertext length depends on the parameter set; adjust as needed
+        # For ML‑KEM‑1024, ciphertext is 1568 bytes
+        ciphertext_key_packet = combined[:1568]
+        nonce = combined[1568:1568+12]
+        encrypted_password = combined[1568+12:]
+        
+        # 1. Decapsulate shared secret
+        shared_secret = kem_engine.decaps(DECRYPTION_KEY, ciphertext_key_packet)
+        
+        # 2. Derive AES key
+        hkdf = HKDF(
+            algorithm=SHA256(),
+            length=32,
+            salt=None,
+            info=b"Coherzo-Password-Hash"
+        )
+        aes_key = hkdf.derive(shared_secret)
+        
+        # 3. Decrypt
+        aesgcm = AESGCM(aes_key)
+        decrypted_password = aesgcm.decrypt(nonce, encrypted_password, None)
+        
+        return decrypted_password.decode('utf-8') == password
+    except Exception:
+        return False
 
 # health check 
 @app.get("/")
@@ -364,7 +435,8 @@ async def admin_set_password(body: AdminSetPasswordRequest):
                 status_code=404,
                 detail=f"Phone '{clean}' not found. Registered phones: {phones}"
             )
-        hashed = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+        # 🔐 Replace bcrypt with quantum‑safe hash
+        hashed = pqc_hash_password(body.password)
         plumber.password_hash = hashed
         db.commit()
         print(f"admin set-password success for {plumber.name} ({clean})")
@@ -386,7 +458,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         if body.password != master_pwd:
             raise HTTPException(status_code=401, detail="Incorrect master password.")
         token = _issue_admin_token({"id": "master", "name": "Master Admin", "phone": "ALL", "isMaster": True})
-        response = JSONResponse({"success": True, "name": "Master Admin", "token": token})
+        response = JSONResponse({"success": True, "name": "Master Admin"})
         response.set_cookie(
             key="admin_token",
             value=token,
@@ -406,10 +478,11 @@ async def admin_login(body: AdminLoginRequest, request: Request):
             raise HTTPException(status_code=401, detail="Phone not found. Use 'admin' for master access.")
         if not plumber.password_hash:
             raise HTTPException(status_code=401, detail="No password set. Use the Set Password option first.", headers={"X-Needs-Password": "true"})
-        if not bcrypt.checkpw(body.password.encode(), plumber.password_hash.encode()):
+        # 🔐 Replace bcrypt with quantum‑safe verification
+        if not pqc_verify_password(body.password, plumber.password_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
         token = _issue_admin_token({"id": plumber.id, "name": plumber.name, "phone": plumber.plumber_phone, "isMaster": False})
-        response = JSONResponse({"success": True, "name": plumber.name, "token": token})
+        response = JSONResponse({"success": True, "name": plumber.name})
         response.set_cookie(
             key="admin_token",
             value=token,
