@@ -343,6 +343,7 @@ async def _get_current_admin(request: Request) -> dict:
 
 @app.post("/admin/set-password")
 async def admin_set_password(body: AdminSetPasswordRequest):
+    print('setting the password')
     """Set or update password for an existing plumber using their registered phone."""
     if not body.password or len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
@@ -353,7 +354,8 @@ async def admin_set_password(body: AdminSetPasswordRequest):
     from database import SessionLocal, Plumber
     db = SessionLocal()
     try:
-        plumber = db.query(Plumber).filter(Plumber.plumber_phone == clean).first()
+        # Match by checking if the stored number ends with the cleaned input
+        plumber = db.query(Plumber).filter(Plumber.plumber_phone.like(f"%{clean}")).first()
         if not plumber:
             # Show registered phones in error so user knows what to type
             all_plumbers = db.query(Plumber).all()
