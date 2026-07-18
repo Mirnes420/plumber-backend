@@ -401,7 +401,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
     from database import SessionLocal, Plumber
     db = SessionLocal()
     try:
-        plumber = db.query(Plumber).filter(Plumber.plumber_phone == clean).first()
+        plumber = db.query(Plumber).filter(Plumber.plumber_phone.like(f"%{clean}")).first()
         if not plumber:
             raise HTTPException(status_code=401, detail="Phone not found. Use 'admin' for master access.")
         if not plumber.password_hash:
