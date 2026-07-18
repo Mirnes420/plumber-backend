@@ -374,6 +374,7 @@ async def admin_set_password(body: AdminSetPasswordRequest):
 @app.post("/admin/login")
 async def admin_login(body: AdminLoginRequest, request: Request):
     """Login: phone + password (or 'admin' + ADMIN_MASTER_PASSWORD for master access)."""
+    print("got Login: phone + password (or 'admin' + ADMIN_MASTER_PASSWORD for master access).")
     master_pwd = os.getenv("ADMIN_MASTER_PASSWORD")
 
     # Master admin bypass
