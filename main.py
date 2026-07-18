@@ -24,7 +24,6 @@ import bcrypt
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
-
 # load our local environment from .env
 load_dotenv()
 
@@ -384,7 +383,18 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         if body.password != master_pwd:
             raise HTTPException(status_code=401, detail="Incorrect master password.")
         token = _issue_admin_token({"id": "master", "name": "Master Admin", "phone": "ALL", "isMaster": True})
-        return {"success": True, "name": "Master Admin", "token": token}
+        # Replace this line:
+        # return {"success": True, "name": "Master Admin", "token": token}
+        # With:
+        response = JSONResponse({"success": True, "name": "Master Admin"})
+        response.set_cookie(
+            key="admin_token",
+            value=token,
+            httponly=True,
+            secure=True,  # set to False for local dev if needed
+            samesite="lax"
+        )
+        return response
 
     # Plumber login
     clean = _clean_phone(body.phone)
@@ -399,10 +409,20 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         if not bcrypt.checkpw(body.password.encode(), plumber.password_hash.encode()):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
         token = _issue_admin_token({"id": plumber.id, "name": plumber.name, "phone": plumber.plumber_phone, "isMaster": False})
-        return {"success": True, "name": plumber.name, "token": token}
+        # Replace this line:
+        # return {"success": True, "name": plumber.name, "token": token}
+        # With:
+        response = JSONResponse({"success": True, "name": plumber.name})
+        response.set_cookie(
+            key="admin_token",
+            value=token,
+            httponly=True,
+            secure=True,  # set to False for local dev if needed
+            samesite="lax"
+        )
+        return response
     finally:
         db.close()
-
 
 @app.get("/admin/me")
 async def admin_me(request: Request):
