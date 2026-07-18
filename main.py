@@ -24,18 +24,11 @@ import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 
-# 🔐 Quantum‑safe hashing imports
-from mlkem.ml_kem import ML_KEM
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.hashes import SHA256
+# 🔐 Password hashing (argon2 via passlib)
+from passlib.hash import argon2
 
 # load our local environment from .env
 load_dotenv()
-
-# Initialize ML‑KEM engine
-kem_engine = ML_KEM()
-ENCRYPTION_KEY, DECRYPTION_KEY = kem_engine.key_gen()
 
 app = FastAPI(title="Coherzo")
 
@@ -43,64 +36,24 @@ app = FastAPI(title="Coherzo")
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 
-# 🔐 Quantum‑safe password hashing helpers
+# 🔐 Password hashing helpers
 def pqc_hash_password(password: str) -> str:
     """
-    Hash a password using ML‑KEM + HKDF + AES‑GCM.
-    Returns a hex string containing: ciphertext_key_packet | nonce | encrypted_hash
+    Hash a password using argon2. Function name kept as pqc_hash_password
+    to avoid touching call sites elsewhere in the codebase.
     """
-    # 1. Encapsulate shared secret
-    shared_secret, ciphertext_key_packet = kem_engine.encaps(ENCRYPTION_KEY)
-    
-    # 2. Derive AES key
-    hkdf = HKDF(
-        algorithm=SHA256(),
-        length=32,
-        salt=None,
-        info=b"Coherzo-Password-Hash"
-    )
-    aes_key = hkdf.derive(shared_secret)
-    
-    # 3. Encrypt password bytes
-    nonce = os.urandom(12)
-    aesgcm = AESGCM(aes_key)
-    encrypted_password = aesgcm.encrypt(nonce, password.encode('utf-8'), None)
-    
-    # 4. Combine into a single storage string
-    combined = ciphertext_key_packet + nonce + encrypted_password
-    return combined.hex()
+    return argon2.hash(password)
 
-def pqc_verify_password(password: str, stored_hash_hex: str) -> bool:
+def pqc_verify_password(password: str, stored_hash: str) -> bool:
+    """
+    Verify a password against an argon2 hash. Function name kept as
+    pqc_verify_password to avoid touching call sites elsewhere.
+    """
     try:
-        combined = bytes.fromhex(stored_hash_hex)
-        
-        # 1. Extract ciphertext_key_packet: use the length from kem_engine.encaps
-        #    (or store the length alongside the hash if the lib doesn’t expose it)
-        #    For now, assume ML‑KEM‑1024: 1568 bytes
-        ciphertext_len = 1568  # adjust if your ML‑KEM parameter set differs
-        ciphertext_key_packet = combined[:ciphertext_len]
-        nonce = combined[ciphertext_len:ciphertext_len+12]
-        encrypted_password = combined[ciphertext_len+12:]
-        
-        # 2. Decapsulate shared secret
-        shared_secret = kem_engine.decaps(DECRYPTION_KEY, ciphertext_key_packet)
-        
-        # 3. Derive AES key
-        hkdf = HKDF(
-            algorithm=SHA256(),
-            length=32,
-            salt=None,
-            info=b"Coherzo-Password-Hash"
-        )
-        aes_key = hkdf.derive(shared_secret)
-        
-        # 4. Decrypt
-        aesgcm = AESGCM(aes_key)
-        decrypted_password = aesgcm.decrypt(nonce, encrypted_password, None)
-        
-        return decrypted_password.decode('utf-8') == password
+        return argon2.verify(password, stored_hash)
     except Exception:
         return False
+
 # health check 
 @app.get("/")
 async def root():
@@ -415,7 +368,8 @@ async def admin_set_password(body: AdminSetPasswordRequest):
     """Set or update password for an existing plumber using their registered phone."""
     if not body.password or len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
-
+    
+    print(f"admin set-password: received phone='{body.phone}' password length={len(body.password)}")
     clean = _clean_phone(body.phone)
     print(f"admin set-password: raw='{body.phone}' clean='{clean}'")
 
@@ -432,7 +386,7 @@ async def admin_set_password(body: AdminSetPasswordRequest):
                 status_code=404,
                 detail=f"Phone '{clean}' not found. Registered phones: {phones}"
             )
-        # 🔐 Replace bcrypt with quantum‑safe hash
+        # 🔐 Hash with argon2
         hashed = pqc_hash_password(body.password)
         plumber.password_hash = hashed
         db.commit()
@@ -447,6 +401,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
     """Login: phone + password (or 'admin' + ADMIN_MASTER_PASSWORD for master access)."""
     print("got Login: phone + password (or 'admin' + ADMIN_MASTER_PASSWORD for master access).")
     master_pwd = os.getenv("ADMIN_MASTER_PASSWORD")
+    print(f"admin login: received phone='{body.phone}' password length={len(body.password)}")
 
     # Master admin bypass
     if body.phone.strip().lower() == "admin":
@@ -475,7 +430,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
             raise HTTPException(status_code=401, detail="Phone not found. Use 'admin' for master access.")
         if not plumber.password_hash:
             raise HTTPException(status_code=401, detail="No password set. Use the Set Password option first.", headers={"X-Needs-Password": "true"})
-        # 🔐 Replace bcrypt with quantum‑safe verification
+        # 🔐 Verify with argon2
         if not pqc_verify_password(body.password, plumber.password_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
         token = _issue_admin_token({"id": plumber.id, "name": plumber.name, "phone": plumber.plumber_phone, "isMaster": False})
