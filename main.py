@@ -410,7 +410,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         if body.password != master_pwd:
             raise HTTPException(status_code=401, detail="Incorrect master password.")
         token = _issue_admin_token({"id": "master", "name": "Master Admin", "phone": "ALL", "isMaster": True})
-        response = JSONResponse({"success": True, "name": "Master Admin"})
+        response = JSONResponse({"success": True, "name": "Master Admin", "is_master": True})
         response.set_cookie(
             key="admin_token",
             value=token,
