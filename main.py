@@ -23,6 +23,7 @@ from logic import send_whatsapp_message
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 # 🔐 Password hashing (argon2 via passlib)
 from passlib.hash import argon2
@@ -31,6 +32,19 @@ from passlib.hash import argon2
 load_dotenv()
 
 app = FastAPI(title="Coherzo")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://cringing-niece-playpen.ngrok-free.dev",
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "*"  # Optional: Use "*" to allow all origins during development
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows GET, POST, OPTIONS, etc.
+    allow_headers=["*"],  # Allows all headers (including ngrok-skip-browser-warning)
+)
 
 # here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
