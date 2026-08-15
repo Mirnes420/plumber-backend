@@ -323,4 +323,4 @@ async def process_property_lead(
     # 3. Dispatch to Marketer
     await send_whatsapp_message(to=target_marketer, payload_type="text", content={"body": marketer_card})
     
-    return {"status": "ok", "lead_summary": marketer_card}Z
+    return {"status": "ok", "lead_summary": marketer_card}
