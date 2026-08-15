@@ -326,6 +326,19 @@ async def api_incident(
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
     
 
+
+
+# --- QR SCAN & PROPERTY INQUIRY ENDPOINT ---
+class PropertyInquiryRequest(BaseModel):
+    customer_phone: str
+    customer_name: str
+    property_id: str
+    budget: str
+    timeline: str
+    marketer_phone: str = None  # Optional override, defaults to system marketer
+
+
+
 @app.post("/api/property-inquiry")
 async def api_property_inquiry(payload: PropertyInquiryRequest = Body(...)):
     """
