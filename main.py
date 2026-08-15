@@ -327,7 +327,7 @@ async def api_incident(
     
 
 @app.post("/api/property-inquiry")
-async def api_property_inquiry(payload: PropertyInquiryRequest):
+async def api_property_inquiry(payload: PropertyInquiryRequest = Body(...)):
     """
     Endpoint triggered when a user scans a property QR code, passes hardcoded
     qualification steps, and submits their budget/timeline.
