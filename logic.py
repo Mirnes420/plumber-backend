@@ -278,3 +278,49 @@ async def process_incoming_incident(
         print(f"Failed to notify plumber: {e}")
 
     return triage_result, notification_sent
+
+
+
+# --- PROPERTY LEAD DISPATCH LOGIC ---
+async def process_property_lead(
+    customer_phone: str,
+    customer_name: str,
+    property_id: str,
+    budget: str,
+    timeline: str,
+    marketer_phone: str = None
+):
+    """
+    Formats the buyer profile, sends a confirmation to the customer,
+    and dispatches an actionable 1-tap card to the marketer's WhatsApp.
+    """
+    target_marketer = clean_whatsapp_number(marketer_phone or PLUMBER_NUMBER or "385919293138")
+    clean_client_phone = clean_whatsapp_number(customer_phone)
+    
+    # 1. Send immediate engagement message to the buyer
+    buyer_msg = (
+        f"👋 Hi *{customer_name}*!\n\n"
+        f"Thank you for inquiring about property *{property_id}*.\n"
+        f"We've logged your preferences (Budget: {budget} | Timeline: {timeline}).\n\n"
+        f"An agent will reach out to you on WhatsApp in under 60 seconds with the complete brochure and tour details!"
+    )
+    await send_whatsapp_message(to=clean_client_phone, payload_type="text", content={"body": buyer_msg})
+
+    # 2. Format Marketer WhatsApp Action Card
+    formatted_client_phone = f"+{clean_client_phone}" if not clean_client_phone.startswith("+") else clean_client_phone
+    wa_direct_link = f"https://wa.me/{clean_client_phone}?text=Hi%20{urllib.parse.quote(customer_name)},%20I%20saw%20your%20inquiry%20for%20property%20{property_id}!"
+    
+    marketer_card = (
+        f"\n🚨 *NEW HIGH-INTENT PROPERTY LEAD*\n\n"
+        f"👤 *Buyer Name:* {customer_name}\n"
+        f"🏢 *Property ID:* {property_id}\n"
+        f"💰 *Budget:* {budget}\n"
+        f"⏳ *Timeline:* {timeline}\n"
+        f"📱 *Phone:* {formatted_client_phone}\n\n"
+        f"⚡ *1-Tap Instant Connect:* {wa_direct_link}\n"
+    )
+
+    # 3. Dispatch to Marketer
+    await send_whatsapp_message(to=target_marketer, payload_type="text", content={"body": marketer_card})
+    
+    return {"status": "ok", "lead_summary": marketer_card}Z

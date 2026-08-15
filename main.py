@@ -312,6 +312,37 @@ async def api_incident(
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
     
 
+@app.post("/api/property-inquiry")
+async def api_property_inquiry(payload: PropertyInquiryRequest):
+    """
+    Endpoint triggered when a user scans a property QR code, passes hardcoded
+    qualification steps, and submits their budget/timeline.
+    """
+    print(f"\n=================== QR PROPERTY INQUIRY ===================")
+    print(f"🏠 Property: {payload.property_id} | Client: {payload.customer_name} ({payload.customer_phone})")
+    
+    try:
+        from logic import process_property_lead
+        
+        result = await process_property_lead(
+            customer_phone=payload.customer_phone,
+            customer_name=payload.customer_name,
+            property_id=payload.property_id,
+            budget=payload.budget,
+            timeline=payload.timeline,
+            marketer_phone=payload.marketer_phone
+        )
+        
+        return JSONResponse({
+            "status": "success",
+            "message": "Inquiry processed and marketer notified via WhatsApp.",
+            "lead_summary": result.get("lead_summary")
+        })
+    except Exception as err:
+        print(f"❌ PROPERTY INQUIRY ERROR: {err}")
+        return JSONResponse({"status": "error", "detail": str(err)}, status_code=500)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
@@ -323,6 +354,18 @@ if __name__ == "__main__":
 
 _ADMIN_JWT_SECRET = os.getenv("ADMIN_JWT_SECRET", "your_random_secret")
 _ADMIN_JWT_ALGO = "HS256"
+
+
+
+# --- QR SCAN & PROPERTY INQUIRY ENDPOINT ---
+class PropertyInquiryRequest(BaseModel):
+    customer_phone: str
+    customer_name: str
+    property_id: str
+    budget: str
+    timeline: str
+    marketer_phone: str = None  # Optional override, defaults to system marketer
+
 
 class AdminSetPasswordRequest(BaseModel):
     phone: str
