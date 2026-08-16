@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import urllib.parse
 from twilio.rest import Client
 import os
-
+rom database import log_property_lead 
 
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
@@ -282,21 +282,20 @@ async def process_incoming_incident(
 
 
 # --- PROPERTY LEAD DISPATCH LOGIC ---
+
 async def process_property_lead(
     customer_phone: str,
     customer_name: str,
     property_id: str,
     budget: str,
     timeline: str,
-    marketer_phone: str = None
+    marketer_phone: str = None,
+    language: str = None,
+    raw_message: str = None
 ):
-    """
-    Formats the buyer profile, sends a confirmation to the customer,
-    and dispatches an actionable 1-tap card to the marketer's WhatsApp.
-    """
-    target_marketer = clean_whatsapp_number(marketer_phone or PLUMBER_NUMBER or "385919293138")
+    target_marketer = clean_whatsapp_number(marketer_phone or "385919293138")
     clean_client_phone = clean_whatsapp_number(customer_phone)
-    
+
     # 1. Send immediate engagement message to the buyer
     buyer_msg = (
         f"👋 Hi *{customer_name}*!\n\n"
@@ -309,7 +308,7 @@ async def process_property_lead(
     # 2. Format Marketer WhatsApp Action Card
     formatted_client_phone = f"+{clean_client_phone}" if not clean_client_phone.startswith("+") else clean_client_phone
     wa_direct_link = f"https://wa.me/{clean_client_phone}?text=Hi%20{urllib.parse.quote(customer_name)},%20I%20saw%20your%20inquiry%20for%20property%20{property_id}!"
-    
+
     marketer_card = (
         f"\n🚨 *NEW HIGH-INTENT PROPERTY LEAD*\n\n"
         f"👤 *Buyer Name:* {customer_name}\n"
@@ -321,6 +320,23 @@ async def process_property_lead(
     )
 
     # 3. Dispatch to Marketer
-    await send_whatsapp_message(to=target_marketer, payload_type="text", content={"body": marketer_card})
+    notification_sent = await send_whatsapp_message(
+        to=target_marketer, payload_type="text", content={"body": marketer_card}
+    )
+
+    # 4. Log to Supabase
+    log_property_lead(
+        customer_phone=formatted_client_phone,
+        customer_name=customer_name,
+        property_id=property_id,
+        budget=budget,
+        timeline=timeline,
+        marketer_phone=target_marketer,
+        language=language,
+        raw_message=raw_message,
+        notification_sent=bool(notification_sent)
+    )
+
+    return {"status": "ok", "lead_summary": marketer_card}
     
     return {"status": "ok", "lead_summary": marketer_card}

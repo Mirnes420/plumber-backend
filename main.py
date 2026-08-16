@@ -383,17 +383,6 @@ _ADMIN_JWT_SECRET = os.getenv("ADMIN_JWT_SECRET", "your_random_secret")
 _ADMIN_JWT_ALGO = "HS256"
 
 
-
-# --- QR SCAN & PROPERTY INQUIRY ENDPOINT ---
-class PropertyInquiryRequest(BaseModel):
-    customer_phone: str
-    customer_name: str
-    property_id: str
-    budget: str
-    timeline: str
-    marketer_phone: str = None  # Optional override, defaults to system marketer
-
-
 class AdminSetPasswordRequest(BaseModel):
     phone: str
     password: str
