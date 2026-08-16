@@ -19,6 +19,9 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+
+# --- MODELS ---
+
 class Incident(Base):
     __tablename__ = "incidents"
 
@@ -28,26 +31,27 @@ class Incident(Base):
     urgency = Column(String)
     summary = Column(Text)
     raw_message = Column(Text)
-    
-    # ADDED: Table column mappings for the schema attributes added to Supabase
+
     location = Column(Text)
     customer_name = Column(String)
-    
+
     image_url = Column(String)
     status = Column(String, default="PENDING")
     ai_engine = Column(String)
-    gear = Column(Text) # 🔥 ADD THIS LINE to store tool parameters
+    gear = Column(Text)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
 
 class Plumber(Base):
     __tablename__ = "plumbers"
 
-    id = Column(String, primary_key=True) 
+    id = Column(String, primary_key=True)
     name = Column(String)
     plumber_phone = Column(String)
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
-    password_hash = Column(Text, nullable=True) # Added for password authentication
+    password_hash = Column(Text, nullable=True)
+
 
 class WhatsAppAuth(Base):
     __tablename__ = "whatsapp_auth_store"
@@ -55,7 +59,28 @@ class WhatsAppAuth(Base):
     key = Column(String, primary_key=True)
     value = Column(Text)
 
+
+class PropertyLead(Base):
+    __tablename__ = "property_leads"
+
+    id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
+    customer_phone = Column(String, nullable=False)
+    customer_name = Column(String)
+    property_id = Column(String, nullable=False)
+    budget = Column(String)
+    timeline = Column(String)
+    language = Column(String)
+    marketer_phone = Column(String, nullable=False)
+    status = Column(String, default="new")
+    raw_message = Column(Text)
+    notification_sent = Column(Boolean, default=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+
+
 Base.metadata.create_all(bind=engine)
+
+
+# --- SEED DEFAULT PLUMBERS ---
 
 db_seed = SessionLocal()
 try:
@@ -72,8 +97,21 @@ except Exception as seed_err:
 finally:
     db_seed.close()
 
-# CHANGED: Added location and customer_name as incoming function parameters
-def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary: str, raw_message: str, location: str = None, customer_name: str = None, image_url: str = None, ai_engine: str = None, gear: str = None):
+
+# --- INCIDENT FUNCTIONS ---
+
+def log_incident(
+    customer_phone: str,
+    plumber_phone: str,
+    urgency: str,
+    summary: str,
+    raw_message: str,
+    location: str = None,
+    customer_name: str = None,
+    image_url: str = None,
+    ai_engine: str = None,
+    gear: str = None
+):
     """Logs an incident using SQLAlchemy."""
     db = SessionLocal()
     try:
@@ -83,11 +121,11 @@ def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary:
             urgency=urgency,
             summary=summary,
             raw_message=raw_message,
-            location=location,       # ADDED
-            customer_name=customer_name, # ADDED
+            location=location,
+            customer_name=customer_name,
             image_url=image_url,
             ai_engine=ai_engine,
-            gear=gear  # ADDED: Store the recommended tools/parts in the database
+            gear=gear
         )
         db.add(new_incident)
         db.commit()
@@ -99,6 +137,7 @@ def log_incident(customer_phone: str, plumber_phone: str, urgency: str, summary:
         return None
     finally:
         db.close()
+
 
 def get_incidents():
     """Fetches all incidents using SQLAlchemy."""
@@ -113,11 +152,8 @@ def get_incidents():
                 "urgency": i.urgency,
                 "summary": i.summary,
                 "raw_message": i.raw_message,
-                
-                # ADDED: Map fields to JSON response dictionary for dashboard compatibility
                 "location": i.location,
                 "customer_name": i.customer_name,
-                
                 "image_url": i.image_url,
                 "status": i.status,
                 "ai_engine": i.ai_engine,
@@ -130,6 +166,7 @@ def get_incidents():
         return []
     finally:
         db.close()
+
 
 def update_incident_status(incident_id: str, status: str):
     """Updates incident status using SQLAlchemy."""
@@ -148,16 +185,101 @@ def update_incident_status(incident_id: str, status: str):
     finally:
         db.close()
 
+
 def get_plumber_by_id(plumber_id: str):
     """Fetches plumber details from DB by ID."""
     if not plumber_id:
         return None
     db = SessionLocal()
     try:
-        from database import Plumber
         return db.query(Plumber).filter(Plumber.id == str(plumber_id), Plumber.active == True).first()
     except Exception as e:
         print(f"Error fetching plumber {plumber_id}: {e}")
         return None
+    finally:
+        db.close()
+
+
+# --- PROPERTY LEAD FUNCTIONS ---
+
+def log_property_lead(
+    customer_phone: str,
+    customer_name: str,
+    property_id: str,
+    budget: str,
+    timeline: str,
+    marketer_phone: str,
+    language: str = None,
+    raw_message: str = None,
+    notification_sent: bool = False
+):
+    """Logs a property lead using SQLAlchemy."""
+    db = SessionLocal()
+    try:
+        new_lead = PropertyLead(
+            customer_phone=customer_phone,
+            customer_name=customer_name,
+            property_id=property_id,
+            budget=budget,
+            timeline=timeline,
+            language=language,
+            marketer_phone=marketer_phone,
+            raw_message=raw_message,
+            notification_sent=notification_sent
+        )
+        db.add(new_lead)
+        db.commit()
+        db.refresh(new_lead)
+        return new_lead
+    except Exception as e:
+        print(f"Error logging property lead: {e}")
+        db.rollback()
+        return None
+    finally:
+        db.close()
+
+
+def get_property_leads():
+    """Fetches all property leads using SQLAlchemy."""
+    db = SessionLocal()
+    try:
+        leads = db.query(PropertyLead).order_by(PropertyLead.timestamp.desc()).all()
+        return [
+            {
+                "id": l.id,
+                "customer_phone": l.customer_phone,
+                "customer_name": l.customer_name,
+                "property_id": l.property_id,
+                "budget": l.budget,
+                "timeline": l.timeline,
+                "language": l.language,
+                "marketer_phone": l.marketer_phone,
+                "status": l.status,
+                "notification_sent": l.notification_sent,
+                "timestamp": l.timestamp
+            }
+            for l in leads
+        ]
+    except Exception as e:
+        print(f"Error fetching property leads: {e}")
+        return []
+    finally:
+        db.close()
+
+
+def update_property_lead_status(lead_id: str, status: str):
+    """Updates a property lead's status using SQLAlchemy."""
+    db = SessionLocal()
+    try:
+        lead = db.query(PropertyLead).filter(PropertyLead.id == lead_id).first()
+        if lead:
+            lead.status = status
+            db.commit()
+            return True
+        return False
+    except Exception as e:
+        print(f"Error updating lead status: {e}")
+        db.rollback()
+        return False
     finally:
         db.close()
