@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import urllib.parse
 from twilio.rest import Client
 import os
-rom database import log_property_lead 
+from database import log_property_lead 
 
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
