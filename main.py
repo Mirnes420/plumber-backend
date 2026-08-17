@@ -43,12 +43,12 @@ app.add_middleware(
         "https://cringing-niece-playpen.ngrok-free.dev",
         "http://localhost:8080",
         "http://localhost:5173",
-        "http://localhost:3000",
-        "*"  # Optional: Use "*" to allow all origins during development
+        "http://localhost:3000"
+        # Optional: Use "*" to allow all origins during development
     ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows GET, POST, OPTIONS, etc.
-    allow_headers=["*"],  # Allows all headers (including ngrok-skip-browser-warning)
+    allow_methods=["*"],
+    allow_headers=["*"], # Allows all headers (including ngrok-skip-browser-warning)
 )
 
 # here you would set Wbot api url and your number from environment variables or defaults
