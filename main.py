@@ -55,6 +55,19 @@ app.add_middleware(
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 
+
+
+def get_db_connection():
+    db_url = os.environ.get("DATABASE_URL")
+    if not db_url:
+        raise HTTPException(status_code=500, detail="DATABASE_URL environment variable is missing")
+    try:
+        conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+        return conn
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database connection failed: {str(e)}")
+
+
 # 🔐 Password hashing helpers
 def pqc_hash_password(password: str) -> str:
     """
