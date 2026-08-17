@@ -22,8 +22,12 @@ from dotenv import load_dotenv
 from logic import send_whatsapp_message
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
+from typing import List, Optional
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 # 🔐 Password hashing (argon2 via passlib)
 from passlib.hash import argon2
@@ -596,3 +600,132 @@ async def admin_update_status(body: AdminStatusRequest, request: Request):
         return {"success": True}
     finally:
         db.close()
+
+
+# new code ======================================================================================================== # 
+
+# --- SCHEMAS ---
+class PropertyManagerCreate(BaseModel):
+    name: str
+    phone: str
+    email: Optional[str] = None
+class PropertyManagerResponse(BaseModel):
+    id: str
+    name: str
+    phone: str
+    email: Optional[str]
+class PropertyCreate(BaseModel):
+    id: str = Field(..., description="Unique Property ID (e.g. ATH-39)")
+    manager_id: str
+    title: str
+    address: str
+    description: Optional[str] = None
+    budget_range: Optional[str] = None
+    image_url: Optional[str] = None
+    pdf_url: Optional[str] = None
+class PropertyResponse(BaseModel):
+    id: str
+    manager_id: Optional[str]
+    title: str
+    address: str
+    description: Optional[str]
+    budget_range: Optional[str]
+    image_url: Optional[str]
+    pdf_url: Optional[str]
+
+
+# --- PROPERTY MANAGER ENDPOINTS ---
+@app.post("/api/property-managers", response_model=PropertyManagerResponse)
+async def create_property_manager(payload: PropertyManagerCreate):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO property_managers (name, phone, email)
+                VALUES (%s, %s, %s)
+                RETURNING id, name, phone, email
+                """,
+                (payload.name, payload.phone, payload.email)
+            )
+            manager = cur.fetchone()
+            conn.commit()
+            return manager
+    except psycopg2.IntegrityError:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail="A property manager with this phone number already exists.")
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+@app.get("/api/property-managers", response_model=List[PropertyManagerResponse])
+async def list_property_managers():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, phone, email FROM property_managers ORDER BY name ASC")
+            return cur.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+# --- PROPERTY ENDPOINTS ---
+@app.post("/api/properties", response_model=PropertyResponse)
+async def create_property(payload: PropertyCreate):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO properties (id, manager_id, title, address, description, budget_range, image_url, pdf_url)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, manager_id, title, address, description, budget_range, image_url, pdf_url
+                """,
+                (
+                    payload.id.upper().strip(),
+                    payload.manager_id,
+                    payload.title,
+                    payload.address,
+                    payload.description,
+                    payload.budget_range,
+                    payload.image_url,
+                    payload.pdf_url
+                )
+            )
+            prop = cur.fetchone()
+            conn.commit()
+            return prop
+    except psycopg2.IntegrityError as e:
+        conn.rollback()
+        raise HTTPException(status_code=400, detail="Property ID already exists or manager ID is invalid.")
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@app.get("/api/properties", response_model=List[PropertyResponse])
+async def list_properties():
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, manager_id, title, address, description, budget_range, image_url, pdf_url
+                FROM properties
+                ORDER BY created_at DESC
+                """
+            )
+            return cur.fetchall()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+
+# new code ======================================================================================================== # 
