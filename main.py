@@ -41,6 +41,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://cringing-niece-playpen.ngrok-free.dev",
+        "http://localhost:8080",
         "http://localhost:5173",
         "http://localhost:3000",
         "*"  # Optional: Use "*" to allow all origins during development
