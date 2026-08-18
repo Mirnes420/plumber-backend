@@ -673,6 +673,7 @@ async def create_property_manager(payload: PropertyManagerCreate):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
 @app.get("/api/property-managers", response_model=List[PropertyManagerResponse])
 async def list_property_managers():
     conn = get_db_connection()
@@ -765,54 +766,41 @@ async def create_property(request: Request):
     # ------------------------------------------------------------------
     # B) Multipart mode: client sends form fields + optional file uploads
     # ------------------------------------------------------------------
-    elif "multipart/form-data" in content_type:
+        elif "multipart/form-data" in content_type:
         form = await request.form()
 
-        # Text fields
         prop_id      = form.get("id")
         manager_id   = form.get("manager_id")
         title        = form.get("title")
         address      = form.get("address")
         description  = form.get("description") or None
         budget_range = form.get("budget_range") or None
-        
-        # Optional URL strings (if client sends a link instead of a file)
-        image_url = form.get("image_url") or None
-        pdf_url   = form.get("pdf_url") or None
 
-        # File fields (name them "image" and "pdf" in your form)
-        image_file = form.get("image")
-        pdf_file   = form.get("pdf")
+        # Clients may name file inputs either "image"/"pdf" or "image_url"/"pdf_url"
+        image_val = form.get("image") or form.get("image_url")
+        pdf_val   = form.get("pdf") or form.get("pdf_url")
 
-        # Basic required-field check for multipart
-        if not all([prop_id, manager_id, title, address]):
-            raise HTTPException(
-                status_code=422,
-                detail="Fields id, manager_id, title, and address are required."
-            )
-
-        # If a file was uploaded, save it and override the URL with the stored path
-        if image_file and isinstance(image_file, UploadFile):
-            ext = os.path.splitext(image_file.filename)[1]
+        # --- Image ---
+        if image_val and isinstance(image_val, UploadFile):
+            # It's a file upload
+            ext = os.path.splitext(image_val.filename)[1]
             image_name = f"{uuid.uuid4()}{ext}"
             image_path = os.path.join(upload_dir, image_name)
-            save_upload_file(image_file, image_path)
-            # Adjust this URL/prefix to match however you serve static files
+            save_upload_file(image_val, image_path)
             image_url = f"/uploads/{image_name}"
+        else:
+            # It's either a string URL or None
+            image_url = image_val or None
 
-        if pdf_file and isinstance(pdf_file, UploadFile):
-            ext = os.path.splitext(pdf_file.filename)[1]
+        # --- PDF ---
+        if pdf_val and isinstance(pdf_val, UploadFile):
+            ext = os.path.splitext(pdf_val.filename)[1]
             pdf_name = f"{uuid.uuid4()}{ext}"
             pdf_path = os.path.join(upload_dir, pdf_name)
-            save_upload_file(pdf_file, pdf_path)
+            save_upload_file(pdf_val, pdf_path)
             pdf_url = f"/uploads/{pdf_name}"
-
-    else:
-        raise HTTPException(
-            status_code=415,
-            detail="Unsupported Media Type. Use application/json or multipart/form-data."
-        )
-
+        else:
+            pdf_url = pdf_val or None
     # ------------------------------------------------------------------
     # Database insert (same logic as before)
     # ------------------------------------------------------------------
