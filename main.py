@@ -685,42 +685,175 @@ async def list_property_managers():
     finally:
         conn.close()
 
+import base64
+import os
+import shutil
+import uuid
+import json
+from fastapi import Request, UploadFile, HTTPException, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request, exc):
+    """
+    Catches Pydantic validation errors and safely serializes them.
+    Replaces raw bytes (which crash jsonable_encoder) with a safe placeholder.
+    """
+    safe_errors = []
+    for error in exc.errors():
+        err = dict(error)
+        # The 'input' key holds the raw value that failed validation.
+        # If a client sent a file where a string was expected, this is bytes.
+        if "input" in err and isinstance(err["input"], bytes):
+            err["input"] = f"<binary data: {len(err['input'])} bytes>"
+        safe_errors.append(err)
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": safe_errors},
+    )
+
+
+def save_upload_file(upload_file: UploadFile, destination: str) -> str:
+    """Persist an uploaded file to disk and close the handle."""
+    try:
+        with open(destination, "wb") as buffer:
+            shutil.copyfileobj(upload_file.file, buffer)
+    finally:
+        upload_file.file.close()
+    return destination
 
 # --- PROPERTY ENDPOINTS ---
 @app.post("/api/properties", response_model=PropertyResponse)
-async def create_property(payload: PropertyCreate):
+async def create_property(request: Request):
+    content_type = request.headers.get("content-type", "")
+    
+    # Configure where files are stored (use env var or adjust as needed)
+    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    # Variables to collect
+    prop_id = manager_id = title = address = None
+    description = budget_range = image_url = pdf_url = None
+
+    # ------------------------------------------------------------------
+    # A) JSON mode: client sends PropertyCreate as JSON with URL strings
+    # ------------------------------------------------------------------
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+        # Reuse your existing Pydantic rules for JSON payloads
+        try:
+            payload = PropertyCreate(**body)
+        except ValidationError as e:
+            raise HTTPException(status_code=422, detail=e.errors())
+
+        prop_id       = payload.id
+        manager_id    = payload.manager_id
+        title         = payload.title
+        address       = payload.address
+        description   = payload.description
+        budget_range  = payload.budget_range
+        image_url     = payload.image_url
+        pdf_url       = payload.pdf_url
+
+    # ------------------------------------------------------------------
+    # B) Multipart mode: client sends form fields + optional file uploads
+    # ------------------------------------------------------------------
+    elif "multipart/form-data" in content_type:
+        form = await request.form()
+
+        # Text fields
+        prop_id      = form.get("id")
+        manager_id   = form.get("manager_id")
+        title        = form.get("title")
+        address      = form.get("address")
+        description  = form.get("description") or None
+        budget_range = form.get("budget_range") or None
+        
+        # Optional URL strings (if client sends a link instead of a file)
+        image_url = form.get("image_url") or None
+        pdf_url   = form.get("pdf_url") or None
+
+        # File fields (name them "image" and "pdf" in your form)
+        image_file = form.get("image")
+        pdf_file   = form.get("pdf")
+
+        # Basic required-field check for multipart
+        if not all([prop_id, manager_id, title, address]):
+            raise HTTPException(
+                status_code=422,
+                detail="Fields id, manager_id, title, and address are required."
+            )
+
+        # If a file was uploaded, save it and override the URL with the stored path
+        if image_file and isinstance(image_file, UploadFile):
+            ext = os.path.splitext(image_file.filename)[1]
+            image_name = f"{uuid.uuid4()}{ext}"
+            image_path = os.path.join(upload_dir, image_name)
+            save_upload_file(image_file, image_path)
+            # Adjust this URL/prefix to match however you serve static files
+            image_url = f"/uploads/{image_name}"
+
+        if pdf_file and isinstance(pdf_file, UploadFile):
+            ext = os.path.splitext(pdf_file.filename)[1]
+            pdf_name = f"{uuid.uuid4()}{ext}"
+            pdf_path = os.path.join(upload_dir, pdf_name)
+            save_upload_file(pdf_file, pdf_path)
+            pdf_url = f"/uploads/{pdf_name}"
+
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported Media Type. Use application/json or multipart/form-data."
+        )
+
+    # ------------------------------------------------------------------
+    # Database insert (same logic as before)
+    # ------------------------------------------------------------------
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO properties (id, manager_id, title, address, description, budget_range, image_url, pdf_url)
+                INSERT INTO properties (
+                    id, manager_id, title, address, description,
+                    budget_range, image_url, pdf_url
+                )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, manager_id, title, address, description, budget_range, image_url, pdf_url
+                RETURNING id, manager_id, title, address, description,
+                          budget_range, image_url, pdf_url
                 """,
                 (
-                    payload.id.upper().strip(),
-                    payload.manager_id,
-                    payload.title,
-                    payload.address,
-                    payload.description,
-                    payload.budget_range,
-                    payload.image_url,
-                    payload.pdf_url
-                )
+                    str(prop_id).upper().strip(),
+                    manager_id,
+                    title,
+                    address,
+                    description,
+                    budget_range,
+                    image_url,
+                    pdf_url,
+                ),
             )
             prop = cur.fetchone()
             conn.commit()
             return prop
-    except psycopg2.IntegrityError as e:
+    except psycopg2.IntegrityError:
         conn.rollback()
-        raise HTTPException(status_code=400, detail="Property ID already exists or manager ID is invalid.")
+        raise HTTPException(
+            status_code=400,
+            detail="Property ID already exists or manager ID is invalid."
+        )
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
-
 
 @app.get("/api/properties", response_model=List[PropertyResponse])
 async def list_properties():
