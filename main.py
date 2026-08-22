@@ -777,21 +777,37 @@ async def create_property(request: Request):
         description  = form.get("description") or None
         budget_range = form.get("budget_range") or None
 
-        # MATCH FRONTEND KEYS: Use image_file and pdf_file
-        image_val = form.get("image_file") or form.get("image_url")
-        pdf_val   = form.get("pdf_file") or form.get("pdf_url")
+        # Grab files and strings completely separately
+        image_file = form.get("image_file")
+        image_url_str = form.get("image_url")
+        pdf_file = form.get("pdf_file")
+        pdf_url_str = form.get("pdf_url")
 
         # --- Image ---
-        if image_val and isinstance(image_val, UploadFile):
-            # It's a file upload
-            ext = os.path.splitext(image_val.filename)[1]
+        # Safely check if it's an actual file with a name
+        if hasattr(image_file, "filename") and image_file.filename:
+            ext = os.path.splitext(image_file.filename)[1]
             image_name = f"{uuid.uuid4()}{ext}"
             image_path = os.path.join(upload_dir, image_name)
-            save_upload_file(image_val, image_path)
+            save_upload_file(image_file, image_path)
             image_url = f"/uploads/{image_name}"
+        # Otherwise, check if they provided a text URL
+        elif isinstance(image_url_str, str) and image_url_str.strip():
+            image_url = image_url_str
         else:
-            # It's either a string URL or None
-            image_url = image_val or None
+            image_url = None
+
+        # --- PDF ---
+        if hasattr(pdf_file, "filename") and pdf_file.filename:
+            ext = os.path.splitext(pdf_file.filename)[1]
+            pdf_name = f"{uuid.uuid4()}{ext}"
+            pdf_path = os.path.join(upload_dir, pdf_name)
+            save_upload_file(pdf_file, pdf_path)
+            pdf_url = f"/uploads/{pdf_name}"
+        elif isinstance(pdf_url_str, str) and pdf_url_str.strip():
+            pdf_url = pdf_url_str
+        else:
+            pdf_url = None
 
         # --- PDF ---
         if pdf_val and isinstance(pdf_val, UploadFile):
