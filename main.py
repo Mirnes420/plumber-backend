@@ -694,6 +694,7 @@ import json
 from fastapi import Request, UploadFile, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 @app.exception_handler(RequestValidationError)
@@ -766,7 +767,7 @@ async def create_property(request: Request):
     # ------------------------------------------------------------------
     # B) Multipart mode: client sends form fields + optional file uploads
     # ------------------------------------------------------------------
-        elif "multipart/form-data" in content_type:
+    elif "multipart/form-data" in content_type:
         form = await request.form()
 
         prop_id      = form.get("id")
@@ -776,9 +777,9 @@ async def create_property(request: Request):
         description  = form.get("description") or None
         budget_range = form.get("budget_range") or None
 
-        # Clients may name file inputs either "image"/"pdf" or "image_url"/"pdf_url"
-        image_val = form.get("image") or form.get("image_url")
-        pdf_val   = form.get("pdf") or form.get("pdf_url")
+        # MATCH FRONTEND KEYS: Use image_file and pdf_file
+        image_val = form.get("image_file") or form.get("image_url")
+        pdf_val   = form.get("pdf_file") or form.get("pdf_url")
 
         # --- Image ---
         if image_val and isinstance(image_val, UploadFile):
@@ -801,6 +802,10 @@ async def create_property(request: Request):
             pdf_url = f"/uploads/{pdf_name}"
         else:
             pdf_url = pdf_val or None
+            
+    else:
+        raise HTTPException(status_code=415, detail="Unsupported Media Type")
+
     # ------------------------------------------------------------------
     # Database insert (same logic as before)
     # ------------------------------------------------------------------
@@ -860,7 +865,6 @@ async def list_properties():
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
-
 
 
 # new code ======================================================================================================== # 
