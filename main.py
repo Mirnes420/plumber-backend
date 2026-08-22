@@ -784,14 +784,12 @@ async def create_property(request: Request):
         pdf_url_str = form.get("pdf_url")
 
         # --- Image ---
-        # Safely check if it's an actual file with a name
         if hasattr(image_file, "filename") and image_file.filename:
             ext = os.path.splitext(image_file.filename)[1]
             image_name = f"{uuid.uuid4()}{ext}"
             image_path = os.path.join(upload_dir, image_name)
             save_upload_file(image_file, image_path)
             image_url = f"/uploads/{image_name}"
-        # Otherwise, check if they provided a text URL
         elif isinstance(image_url_str, str) and image_url_str.strip():
             image_url = image_url_str
         else:
@@ -807,18 +805,7 @@ async def create_property(request: Request):
         elif isinstance(pdf_url_str, str) and pdf_url_str.strip():
             pdf_url = pdf_url_str
         else:
-            pdf_url = None
-
-        # --- PDF ---
-        if pdf_val and isinstance(pdf_val, UploadFile):
-            ext = os.path.splitext(pdf_val.filename)[1]
-            pdf_name = f"{uuid.uuid4()}{ext}"
-            pdf_path = os.path.join(upload_dir, pdf_name)
-            save_upload_file(pdf_val, pdf_path)
-            pdf_url = f"/uploads/{pdf_name}"
-        else:
-            pdf_url = pdf_val or None
-            
+            pdf_url = None   
     else:
         raise HTTPException(status_code=415, detail="Unsupported Media Type")
 
