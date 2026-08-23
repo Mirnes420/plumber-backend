@@ -338,5 +338,212 @@ async def process_property_lead(
     )
 
     return {"status": "ok", "lead_summary": marketer_card}
+
+
+# ─── REQUIREMENT 0: DYNAMIC PDF BROCHURE BUILDER ───
+def build_property_pdf(property_id: str, title: str, address: str, description: str, budget_range: str, image_url: Optional[str] = None) -> str:
+    """
+    Builds a clean PDF brochure on the fly for registered properties.
+    Saves the PDF to local uploads directory and returns the relative path.
+    """
+    try:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib import colors
+    except ImportError:
+        print("⚠️ reportlab is not installed. Skipping PDF generation.")
+        return ""
+
+    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+    pdf_filename = f"{property_id.lower()}_brochure.pdf"
+    pdf_path = os.path.join(upload_dir, pdf_filename)
+
+    try:
+        doc = SimpleDocTemplate(pdf_path, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+        styles = getSampleStyleSheet()
+        
+        title_style = ParagraphStyle(
+            'BrochureTitle', parent=styles['Heading1'],
+            fontSize=24, leading=28, textColor=colors.HexColor('#0F172A'),
+            spaceAfter=12
+        )
+        body_style = ParagraphStyle(
+            'BrochureBody', parent=styles['Normal'],
+            fontSize=11, leading=16, textColor=colors.HexColor('#334155'),
+            spaceAfter=8
+        )
+        tag_style = ParagraphStyle(
+            'BrochureTag', parent=styles['Normal'],
+            fontSize=12, leading=14, textColor=colors.HexColor('#2563EB'),
+            spaceAfter=15
+        )
+
+        story = []
+        story.append(Paragraph(f"Property ID: {property_id.upper()}", tag_style))
+        story.append(Paragraph(title, title_style))
+        story.append(Paragraph(f"<b>Location:</b> {address}", body_style))
+        story.append(Paragraph(f"<b>Budget/Price Range:</b> {budget_range or 'Contact Agent'}", body_style))
+        story.append(Spacer(1, 15))
+
+        if image_url:
+            local_img_path = image_url
+            if image_url.startswith("/uploads/"):
+                local_img_path = os.path.join(upload_dir, image_url.replace("/uploads/", ""))
+            
+            if os.path.exists(local_img_path):
+                try:
+                    story.append(Image(local_img_path, width=450, height=250))
+                    story.append(Spacer(1, 15))
+                except Exception as img_err:
+                    print(f"Error appending image to PDF: {img_err}")
+
+        story.append(Paragraph("<b>Overview:</b>", styles['Heading3']))
+        story.append(Paragraph(description or "No description provided.", body_style))
+        story.append(Spacer(1, 40))
+        story.append(Paragraph("<i>Dispatched instantly by Coherzo Lead System</i>", styles['Italic']))
+
+        doc.build(story)
+        return f"/uploads/{pdf_filename}"
+    except Exception as e:
+        print(f"❌ Error compiling PDF: {e}")
+        return ""
+
+
+# ─── REQUIREMENT 3: WHATSAPP BOT CHAT FLOW STATE MACHINE ───
+import re
+from typing import Optional
+from database import SessionLocal, Property, PropertyManager, PropertyChatState
+
+async def process_incoming_property_message(customer_phone: str, message_text: str) -> bool:
+    """
+    Detects if an incoming message is a property inquiry.
+    Sends dynamic PDF brochures, images, and drives conversational state questionnaire.
+    """
+    db = SessionLocal()
+    try:
+        clean_phone = clean_whatsapp_number(customer_phone)
+        message_upper = message_text.upper()
+
+        # 1. Match Property ID regex (e.g. ATH-39)
+        prop_id_match = re.search(r'[A-Z]{2,5}-\d{1,5}', message_upper)
+        
+        if prop_id_match:
+            property_id = prop_id_match.group(0)
+            prop = db.query(Property).filter(Property.id == property_id).first()
+            
+            if prop:
+                manager = db.query(PropertyManager).filter(PropertyManager.id == prop.manager_id).first()
+                agent_phone = manager.phone if manager else "385919293138"
+
+                # Save user's state in DB
+                state = db.query(PropertyChatState).filter(PropertyChatState.phone == clean_phone).first()
+                if not state:
+                    state = PropertyChatState(phone=clean_phone, current_property_id=property_id, state="awaiting_viewing")
+                    db.add(state)
+                else:
+                    state.current_property_id = property_id
+                    state.state = "awaiting_viewing"
+                db.commit()
+
+                # Build absolute links for WhatsApp
+                base_url = os.getenv("BACKEND_HOST_URL", "https://plumber-backend-fnh6.onrender.com").rstrip("/")
+                
+                pdf_link = prop.pdf_url
+                if pdf_link and not pdf_link.startswith("http"):
+                    pdf_link = f"{base_url}{pdf_link if pdf_link.startswith('/') else '/' + pdf_link}"
+                    
+                img_link = prop.image_url
+                if img_link:
+                    first_img = img_link.split(",")[0].strip()
+                    if not first_img.startswith("http"):
+                        img_link = f"{base_url}{first_img if first_img.startswith('/') else '/' + first_img}"
+
+                # Send images if available
+                if img_link:
+                    await send_whatsapp_message(
+                        to=clean_phone,
+                        payload_type="image",
+                        content={
+                            "link": img_link,
+                            "caption": f"Photos of {prop.title}"
+                        }
+                    )
+
+                brochure_text = ""
+                if pdf_link:
+                    brochure_text = f"\n📄 Download brochure: {pdf_link}"
+
+                welcome_msg = (
+                    f"Hello! Are you interested in the property {property_id} ({prop.title})?{brochure_text}\n\n"
+                    f"When are you available for a viewing?"
+                )
+
+                await send_whatsapp_message(
+                    to=clean_phone,
+                    payload_type="text",
+                    content={"body": welcome_msg}
+                )
+                return True
+
+        # 2. Sequential state machine check
+        state = db.query(PropertyChatState).filter(PropertyChatState.phone == clean_phone).first()
+        if state and state.state != "complete":
+            prop_id = state.current_property_id
+            prop = db.query(Property).filter(Property.id == prop_id).first()
+            manager = db.query(PropertyManager).filter(PropertyManager.id == prop.manager_id).first() if prop else None
+            agent_phone = manager.phone if manager else "385919293138"
+
+            if state.state == "awaiting_viewing":
+                state.state = "awaiting_mortgage"
+                db.commit()
+
+                await send_whatsapp_message(
+                    to=clean_phone,
+                    payload_type="text",
+                    content={"body": "Great, noted. Are you pre-approved for a mortgage, or buying in cash?"}
+                )
+                return True
+
+            elif state.state == "awaiting_mortgage":
+                state.state = "complete"
+                db.commit()
+
+                # Log property lead to DB
+                log_property_lead(
+                    customer_phone=f"+{clean_phone}",
+                    customer_name="WhatsApp Client",
+                    property_id=prop_id,
+                    budget=prop.budget_range if prop else "N/A",
+                    timeline="Conversational",
+                    marketer_phone=agent_phone,
+                    raw_message=message_text,
+                    notification_sent=True
+                )
+
+                # Send marketer/agent notification card
+                wa_direct_link = f"https://wa.me/{clean_phone}"
+                agent_card = (
+                    f"🚨 *NEW CONVERSATIONAL PROPERTY LEAD*\n\n"
+                    f"👤 *Phone:* +{clean_phone}\n"
+                    f"🏢 *Property ID:* {prop_id}\n\n"
+                    f"⚡ *1-Tap Instant Connect:* {wa_direct_link}"
+                )
+                await send_whatsapp_message(to=agent_phone, payload_type="text", content={"body": agent_card})
+
+                await send_whatsapp_message(
+                    to=clean_phone,
+                    payload_type="text",
+                    content={"body": "Thank you! The listing agent has been notified and will contact you shortly."}
+                )
+                return True
+
+        return False
+    except Exception as e:
+        print(f"Error in property webhook flow: {e}")
+        return False
+    finally:
+        db.close()
     
     return {"status": "ok", "lead_summary": marketer_card}

@@ -77,6 +77,37 @@ class PropertyLead(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class PropertyManager(Base):
+    __tablename__ = "property_managers"
+
+    id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
+    name = Column(String, nullable=False)
+    phone = Column(String, nullable=False, unique=True)
+    email = Column(String)
+
+
+class Property(Base):
+    __tablename__ = "properties"
+
+    id = Column(String, primary_key=True)
+    manager_id = Column(String)
+    title = Column(String, nullable=False)
+    address = Column(String, nullable=False)
+    description = Column(Text)
+    budget_range = Column(String)
+    image_url = Column(String)
+    pdf_url = Column(String)
+
+
+class PropertyChatState(Base):
+    __tablename__ = "property_chat_states"
+
+    phone = Column(String, primary_key=True)
+    current_property_id = Column(String)
+    state = Column(String, default="awaiting_viewing")
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 Base.metadata.create_all(bind=engine)
 
 

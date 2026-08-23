@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPExcep
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
-from logic import send_whatsapp_message
+from logic import send_whatsapp_message, process_incoming_property_message, build_property_pdf
 import jwt as pyjwt
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
@@ -50,6 +50,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"], # Allows all headers (including ngrok-skip-browser-warning)
 )
+
+# Mount static files for uploads
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+from fastapi.staticfiles import StaticFiles
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
@@ -129,6 +135,11 @@ async def whatsapp_webhook(request: Request):
             
         body_upper = body_raw.upper().replace(" ", "_").strip()
         print(f"📥 Processing text from {customer_phone}: '{body_raw}' (Normalized: {body_upper})")
+
+        # Property management click-to-whatsapp auto-reply & conversational handler
+        is_prop_handled = await process_incoming_property_message(customer_phone, body_raw)
+        if is_prop_handled:
+            return JSONResponse({"status": "ok"})
 
         # 1. Handle Commands (Filtering in WhatsApp Chat)
         filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
@@ -616,7 +627,7 @@ async def admin_update_status(body: AdminStatusRequest, request: Request):
         db.close()
 
 
-# new code ======================================================================================================== # 
+# PROPERTIES ======================================================================================================== # 
 
 # --- SCHEMAS ---
 class PropertyManagerCreate(BaseModel):
@@ -805,7 +816,20 @@ async def create_property(request: Request):
         elif isinstance(pdf_url_str, str) and pdf_url_str.strip():
             pdf_url = pdf_url_str
         else:
-            pdf_url = None   
+            pdf_url = None
+
+        # Dynamic PDF brochure builder fallback (Requirement 0)
+        if not pdf_url:
+            compiled_pdf = build_property_pdf(
+                property_id=prop_id,
+                title=title,
+                address=address,
+                description=description or "",
+                budget_range=budget_range or "",
+                image_url=image_url
+            )
+            if compiled_pdf:
+                pdf_url = compiled_pdf
     else:
         raise HTTPException(status_code=415, detail="Unsupported Media Type")
 
@@ -870,4 +894,4 @@ async def list_properties():
         conn.close()
 
 
-# new code ======================================================================================================== # 
+# PROPERTIES ======================================================================================================== # 
