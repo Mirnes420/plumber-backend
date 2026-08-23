@@ -92,7 +92,7 @@ def clean_whatsapp_number(number: str) -> str:
     number = number.replace("whatsapp:", "").replace("+", "").replace(" ", "").replace("-", "")
     return number
 
-async def send_whatsapp_message(to: str, payload_type: str = "text", content: dict = None, sender_override: str = None):
+async def send_whatsapp_message(to: str, payload_type: str = "text", content: dict = None, sender_override: str = None, wbot_url: str = None):
     """
     Helper to send messages via local wbot API.
     """
@@ -121,12 +121,14 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
             else:
                 return False
 
+            target_api_url = wbot_url.rstrip("/") if wbot_url else WBOT_API_URL
+
             # Retry loop for Render cold starts
             max_retries = 3
             for attempt in range(1, max_retries + 1):
                 try:
-                    print(f"  → Attempt {attempt}/{max_retries}: POST {WBOT_API_URL}/send")
-                    response = await client.post(f"{WBOT_API_URL}/send", headers=headers, json=data)
+                    print(f"  → Attempt {attempt}/{max_retries}: POST {target_api_url}/send")
+                    response = await client.post(f"{target_api_url}/send", headers=headers, json=data)
 
                     if response.status_code in [200, 201]:
                         print(f"✅ wbot Send Success: {response.status_code}")
@@ -416,7 +418,7 @@ import re
 from typing import Optional
 from database import SessionLocal, Property, PropertyManager, PropertyChatState
 
-async def process_incoming_property_message(customer_phone: str, message_text: str) -> bool:
+async def process_incoming_property_message(customer_phone: str, message_text: str, wbot_url: Optional[str] = None) -> bool:
     """
     Detects if an incoming message is a property inquiry.
     Sends dynamic PDF brochures, images, and drives conversational state questionnaire.
@@ -468,7 +470,8 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                         content={
                             "link": img_link,
                             "caption": f"Photos of {prop.title}"
-                        }
+                        },
+                        wbot_url=wbot_url
                     )
 
                 brochure_text = ""
@@ -483,7 +486,8 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                 await send_whatsapp_message(
                     to=clean_phone,
                     payload_type="text",
-                    content={"body": welcome_msg}
+                    content={"body": welcome_msg},
+                    wbot_url=wbot_url
                 )
                 return True
 
@@ -502,7 +506,8 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                 await send_whatsapp_message(
                     to=clean_phone,
                     payload_type="text",
-                    content={"body": "Great, noted. Are you pre-approved for a mortgage, or buying in cash?"}
+                    content={"body": "Great, noted. Are you pre-approved for a mortgage, or buying in cash?"},
+                    wbot_url=wbot_url
                 )
                 return True
 
@@ -530,12 +535,13 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                     f"🏢 *Property ID:* {prop_id}\n\n"
                     f"⚡ *1-Tap Instant Connect:* {wa_direct_link}"
                 )
-                await send_whatsapp_message(to=agent_phone, payload_type="text", content={"body": agent_card})
+                await send_whatsapp_message(to=agent_phone, payload_type="text", content={"body": agent_card}, wbot_url=wbot_url)
 
                 await send_whatsapp_message(
                     to=clean_phone,
                     payload_type="text",
-                    content={"body": "Thank you! The listing agent has been notified and will contact you shortly."}
+                    content={"body": "Thank you! The listing agent has been notified and will contact you shortly."},
+                    wbot_url=wbot_url
                 )
                 return True
 

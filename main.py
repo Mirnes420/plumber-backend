@@ -113,6 +113,7 @@ async def whatsapp_webhook(request: Request):
         customer_phone = None
         body_raw = ""
         form_data = None
+        wbot_url = None
 
         # Robust multi-format parser with explicit debugging
         if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
@@ -120,12 +121,14 @@ async def whatsapp_webhook(request: Request):
             print(f"DEBUG: Form data keys found: {list(form_data.keys())}")
             customer_phone = form_data.get("From")
             body_raw = form_data.get("Body", "").strip()
+            wbot_url = form_data.get("WbotUrl")
         else:
             try:
                 json_data = await request.json()
                 print(f"DEBUG: JSON payload found: {json_data}")
                 customer_phone = json_data.get("From")
                 body_raw = json_data.get("Body", "").strip()
+                wbot_url = json_data.get("WbotUrl")
             except Exception as json_err:
                 print(f"DEBUG: Failed parsing as JSON: {str(json_err)}")
 
@@ -137,7 +140,7 @@ async def whatsapp_webhook(request: Request):
         print(f"📥 Processing text from {customer_phone}: '{body_raw}' (Normalized: {body_upper})")
 
         # Property management click-to-whatsapp auto-reply & conversational handler
-        is_prop_handled = await process_incoming_property_message(customer_phone, body_raw)
+        is_prop_handled = await process_incoming_property_message(customer_phone, body_raw, wbot_url)
         if is_prop_handled:
             return JSONResponse({"status": "ok"})
 
