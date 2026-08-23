@@ -98,7 +98,7 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
     """
     to_number = clean_whatsapp_number(to)
     
-    print(f"Attempting to send WhatsApp to {to_number} via wbot API")
+    print(f"DEBUG: send_whatsapp_message called. to_number={to_number}, type={payload_type}, content={content}")
     
     headers = {
         "Content-Type": "application/json"
@@ -119,15 +119,17 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
                 data["text"] = content.get("body", "")
                 data["buttons"] = content.get("buttons", [])
             else:
+                print("DEBUG: Invalid payload_type specified.")
                 return False
 
             target_api_url = wbot_url.rstrip("/") if wbot_url else WBOT_API_URL
+            print(f"DEBUG: Target API endpoint determined: {target_api_url}/send")
 
             # Retry loop for Render cold starts
             max_retries = 3
             for attempt in range(1, max_retries + 1):
                 try:
-                    print(f"  → Attempt {attempt}/{max_retries}: POST {target_api_url}/send")
+                    print(f"  → Attempt {attempt}/{max_retries}: POST {target_api_url}/send with data: {data}")
                     response = await client.post(f"{target_api_url}/send", headers=headers, json=data)
 
                     if response.status_code in [200, 201]:
@@ -424,20 +426,34 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
     Sends dynamic PDF brochures, images, and drives conversational state questionnaire.
     """
     db = SessionLocal()
+    # Resolve the best wbot URL: use the one passed in, fallback to env var, fallback to WBOT_API_URL
+    resolved_wbot_url = wbot_url or os.getenv("NGROK_WBOT_URL") or WBOT_API_URL
+    print(f"\n{'='*60}")
+    print(f"📲 PROPERTY FLOW: Incoming from {customer_phone}")
+    print(f"   message_text : {repr(message_text)}")
+    print(f"   wbot_url     : {wbot_url}")
+    print(f"   resolved_wbot: {resolved_wbot_url}")
+    print(f"{'='*60}")
+
     try:
         clean_phone = clean_whatsapp_number(customer_phone)
         message_upper = message_text.upper()
+        print(f"   clean_phone  : {clean_phone}")
 
         # 1. Match Property ID regex (e.g. ATH-39)
         prop_id_match = re.search(r'[A-Z]{2,5}-\d{1,5}', message_upper)
+        print(f"   prop_id_match: {prop_id_match.group(0) if prop_id_match else 'NONE — no property ID detected'}")
         
         if prop_id_match:
             property_id = prop_id_match.group(0)
+            print(f"   Searching DB for property: {property_id}")
             prop = db.query(Property).filter(Property.id == property_id).first()
             
             if prop:
+                print(f"   ✅ Property found: {prop.title} | image={prop.image_url} | pdf={prop.pdf_url}")
                 manager = db.query(PropertyManager).filter(PropertyManager.id == prop.manager_id).first()
-                agent_phone = manager.phone if manager else "385919293138"
+                agent_phone = manager.phone if manager else os.getenv("DEFAULT_AGENT_PHONE", "385919293138")
+                print(f"   Agent phone: {agent_phone}")
 
                 # Save user's state in DB
                 state = db.query(PropertyChatState).filter(PropertyChatState.phone == clean_phone).first()
@@ -462,17 +478,22 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                     if not first_img.startswith("http"):
                         img_link = f"{base_url}{first_img if first_img.startswith('/') else '/' + first_img}"
 
+                print(f"   pdf_link: {pdf_link}")
+                print(f"   img_link: {img_link}")
+                print(f"   Sending image + welcome message to {clean_phone}...")
+
                 # Send images if available
                 if img_link:
-                    await send_whatsapp_message(
+                    img_ok = await send_whatsapp_message(
                         to=clean_phone,
                         payload_type="image",
                         content={
                             "link": img_link,
                             "caption": f"Photos of {prop.title}"
                         },
-                        wbot_url=wbot_url
+                        wbot_url=resolved_wbot_url
                     )
+                    print(f"   Image send result: {img_ok}")
 
                 brochure_text = ""
                 if pdf_link:
@@ -483,35 +504,43 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                     f"When are you available for a viewing?"
                 )
 
-                await send_whatsapp_message(
+                print(f"   Sending welcome message: {repr(welcome_msg)}")
+                msg_ok = await send_whatsapp_message(
                     to=clean_phone,
                     payload_type="text",
                     content={"body": welcome_msg},
-                    wbot_url=wbot_url
+                    wbot_url=resolved_wbot_url
                 )
+                print(f"   Welcome message send result: {msg_ok}")
                 return True
+            else:
+                print(f"   ❌ Property {property_id} NOT FOUND in DB — no reply will be sent.")
 
         # 2. Sequential state machine check
         state = db.query(PropertyChatState).filter(PropertyChatState.phone == clean_phone).first()
         if state and state.state != "complete":
+            print(f"   State machine: phone={clean_phone} state={state.state} property={state.current_property_id}")
             prop_id = state.current_property_id
             prop = db.query(Property).filter(Property.id == prop_id).first()
             manager = db.query(PropertyManager).filter(PropertyManager.id == prop.manager_id).first() if prop else None
-            agent_phone = manager.phone if manager else "385919293138"
+            agent_phone = manager.phone if manager else os.getenv("DEFAULT_AGENT_PHONE", "385919293138")
 
             if state.state == "awaiting_viewing":
+                print(f"   → Transitioning to awaiting_mortgage, asking about mortgage...")
                 state.state = "awaiting_mortgage"
                 db.commit()
 
-                await send_whatsapp_message(
+                ok = await send_whatsapp_message(
                     to=clean_phone,
                     payload_type="text",
                     content={"body": "Great, noted. Are you pre-approved for a mortgage, or buying in cash?"},
-                    wbot_url=wbot_url
+                    wbot_url=resolved_wbot_url
                 )
+                print(f"   Mortgage question send result: {ok}")
                 return True
 
             elif state.state == "awaiting_mortgage":
+                print(f"   → Conversation complete. Logging lead and notifying agent {agent_phone}...")
                 state.state = "complete"
                 db.commit()
 
@@ -527,7 +556,6 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                     notification_sent=True
                 )
 
-                # Send marketer/agent notification card
                 wa_direct_link = f"https://wa.me/{clean_phone}"
                 agent_card = (
                     f"🚨 *NEW CONVERSATIONAL PROPERTY LEAD*\n\n"
@@ -535,19 +563,24 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                     f"🏢 *Property ID:* {prop_id}\n\n"
                     f"⚡ *1-Tap Instant Connect:* {wa_direct_link}"
                 )
-                await send_whatsapp_message(to=agent_phone, payload_type="text", content={"body": agent_card}, wbot_url=wbot_url)
+                await send_whatsapp_message(to=agent_phone, payload_type="text", content={"body": agent_card}, wbot_url=resolved_wbot_url)
 
-                await send_whatsapp_message(
+                ok = await send_whatsapp_message(
                     to=clean_phone,
                     payload_type="text",
                     content={"body": "Thank you! The listing agent has been notified and will contact you shortly."},
-                    wbot_url=wbot_url
+                    wbot_url=resolved_wbot_url
                 )
+                print(f"   Closing message send result: {ok}")
                 return True
+        else:
+            print(f"   No active property state for {clean_phone}. Message will pass through to plumber flow.")
 
         return False
     except Exception as e:
-        print(f"Error in property webhook flow: {e}")
+        import traceback
+        print(f"❌ EXCEPTION in property webhook flow: {e}")
+        print(traceback.format_exc())
         return False
     finally:
         db.close()
