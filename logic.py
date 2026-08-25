@@ -488,7 +488,9 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
             print(f"   No property match found for words: {words}")
             return None, None
 
-        prop, property_id = find_property(message_upper)
+        # Require exact trigger phrase to prevent hallucinations/false positives on random words
+        is_initial = "INTERESTED IN PROPERTY" in message_upper
+        prop, property_id = find_property(message_upper) if is_initial else (None, None)
 
         if prop:
             print(f"   ✅ Property found: id={prop.id} title={prop.title} | image={prop.image_url} | pdf={prop.pdf_url}")
