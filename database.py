@@ -105,7 +105,9 @@ class PropertyChatState(Base):
     phone = Column(String, primary_key=True)
     current_property_id = Column(String)
     state = Column(String, default="awaiting_viewing")
+    viewing_answer = Column(Text, nullable=True)   # stores buyer's viewing availability reply
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
 
 
 Base.metadata.create_all(bind=engine)

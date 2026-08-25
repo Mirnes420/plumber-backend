@@ -107,8 +107,118 @@ JSON OUTPUT ONLY. DO NOT INCLUDE ANY COMMENTS (e.g., // or /* */) inside the JSO
 }"""
 }
 
+SYSTEM_PROMPTS["property_lead"] = """You are an expert real estate lead qualification analyst. Your job is to read the collected Q&A from a WhatsApp conversation between a prospective buyer and a real estate bot, then produce a structured lead intelligence report.
+
+LEAD TEMPERATURE CRITERIA:
+- HOT: Buyer is ready to view immediately, pre-approved for mortgage or paying cash, has specific property requirements that match, and is actively comparing options.
+- WARM: Buyer is interested and responsive but has a vague timeline (1-3 months), unclear financing, or is "just looking" with some genuine interest signals.
+- COLD: Buyer is browsing casually, very long timeline (6+ months), no financing clarity, vague responses, or low engagement.
+
+FINANCING SIGNALS:
+- "cash" or "cash buyer" → Strong buyer signal (HOT indicator).
+- "pre-approved", "mortgage ready", "bank approval" → Solid buyer signal.
+- "looking into financing", "not sure yet" → Warm signal.
+- No mention of financing → Flag as unknown.
+
+YOUR TASK:
+Analyze the conversation transcript and return a JSON object with a lead intelligence report. Be concise, specific, and professional.
+
+JSON OUTPUT ONLY. Return exactly this structure:
+
+{
+    "lead_temperature": "HOT|WARM|COLD",
+    "confidence_score": 0-100,
+    "buyer_summary": "2-3 sentence human-readable summary of who this buyer is and what they need.",
+    "financing_status": "cash|pre-approved|exploring|unknown",
+    "urgency": "immediate|1-3 months|5-10 months|just browsing",
+    "red_flags": "Any concerns or signals of low seriousness. Empty string if none.",
+    "recommended_action": "Specific next step the agent should take (e.g., 'Book a viewing call within 24h', 'Send comparable listings', 'Add to newsletter, low priority').",
+    "ai_engine": "property_lead_analyzer"
+}"""
+
 # Legacy backward-compatibility mapping
 SYSTEM_PROMPT = SYSTEM_PROMPTS["plumber"]
+
+
+# ==============================================================================
+# 6. PROPERTY LEAD INTELLIGENCE ANALYZER
+# ==============================================================================
+async def analyze_property_lead(
+    customer_phone: str,
+    property_id: str,
+    property_title: str,
+    viewing_answer: str,
+    mortgage_answer: str,
+    budget_range: str = "",
+) -> dict:
+    """
+    Runs AI analysis on the collected property inquiry Q&A to classify lead
+    temperature, summarize buyer intent, and recommend next agent actions.
+    This is completely separate from the emergency dispatch pipeline.
+    """
+    import time
+
+    print(f"\n{'='*60}")
+    print(f"🏠 PROPERTY LEAD AI: Analyzing lead for {customer_phone} on {property_id}")
+    print(f"{'='*60}")
+    timer_start = time.time()
+
+    system_prompt = SYSTEM_PROMPTS["property_lead"]
+
+    conversation_text = (
+        f"Property Inquiry Conversation Transcript\n"
+        f"---\n"
+        f"Property: {property_title} ({property_id})\n"
+        f"Budget Range Listed: {budget_range or 'Not specified'}\n"
+        f"---\n"
+        f"Bot: When are you available for a viewing?\n"
+        f"Buyer: {viewing_answer or '(no response)'}\n"
+        f"---\n"
+        f"Bot: Are you pre-approved for a mortgage, or are you buying in cash?\n"
+        f"Buyer: {mortgage_answer or '(no response)'}\n"
+    )
+
+    print(f"   Transcript:\n{conversation_text}")
+
+    base_delay = 1.5
+    for attempt_idx, model_name in enumerate(MODEL_TIERS):
+        try:
+            print(f"   Attempting lead analysis with {model_name}...")
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[conversation_text],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    response_mime_type="application/json"
+                )
+            )
+
+            if response.text:
+                parsed = json.loads(response.text)
+                parsed["ai_engine"] = f"property_lead/{model_name}"
+                elapsed = time.time() - timer_start
+                print(f"   ✅ Lead analysis succeeded in {elapsed:.2f}s: temp={parsed.get('lead_temperature')} confidence={parsed.get('confidence_score')}")
+                return parsed
+
+        except Exception as e:
+            calculated_delay = base_delay * (2 ** attempt_idx)
+            print(f"   ⚠️ {model_name} failed: {e}")
+            if model_name != MODEL_TIERS[-1]:
+                await asyncio.sleep(calculated_delay)
+            continue
+
+    # Fallback if all models fail
+    print("   ❌ All models failed for property lead analysis. Using safe defaults.")
+    return {
+        "lead_temperature": "WARM",
+        "confidence_score": 30,
+        "buyer_summary": "AI analysis unavailable. Manual review required.",
+        "financing_status": "unknown",
+        "urgency": "unknown",
+        "red_flags": "AI engine timeout — data may be incomplete.",
+        "recommended_action": "Contact buyer manually and qualify by phone.",
+        "ai_engine": "property_lead/fallback"
+    }
 
 # ==============================================================================
 # 4. NETWORK INGESTION GATEWAYS (OLLAMA & HTTPX)

@@ -1,6 +1,6 @@
 import os
 import sys
-from ai_engine import analyze_triage
+from ai_engine import analyze_triage, analyze_property_lead
 from database import log_incident
 from dotenv import load_dotenv
 import urllib.parse
@@ -506,6 +506,7 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
             else:
                 state.current_property_id = property_id
                 state.state = "awaiting_viewing"
+                state.viewing_answer = None
             db.commit()
 
             # Build absolute links for WhatsApp
@@ -553,7 +554,8 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
             agent_phone = manager.phone if manager else os.getenv("DEFAULT_AGENT_PHONE", "385919293138")
 
             if state.state == "awaiting_viewing":
-                print(f"   → Transitioning to awaiting_mortgage...")
+                print(f"   → Storing viewing answer and transitioning to awaiting_mortgage...")
+                state.viewing_answer = message_text   # persist buyer's viewing availability
                 state.state = "awaiting_mortgage"
                 db.commit()
                 ok = await _send(clean_phone, "text", {"body": "Great, noted! 👍 Are you pre-approved for a mortgage, or are you buying in cash?"})
@@ -561,28 +563,60 @@ async def process_incoming_property_message(customer_phone: str, message_text: s
                 return True
 
             elif state.state == "awaiting_mortgage":
-                print(f"   → Conversation complete. Logging lead and notifying agent {agent_phone}...")
+                print(f"   → Conversation complete. Running lead AI analysis...")
+                viewing_answer = getattr(state, 'viewing_answer', None) or "(not captured)"
+                mortgage_answer = message_text
+
                 state.state = "complete"
                 db.commit()
+
+                # Run real-estate-specific AI analysis (separate from plumbing engine)
+                lead_intel = {}
+                try:
+                    lead_intel = await analyze_property_lead(
+                        customer_phone=f"+{clean_phone}",
+                        property_id=prop_id,
+                        property_title=prop.title if prop else prop_id,
+                        viewing_answer=viewing_answer,
+                        mortgage_answer=mortgage_answer,
+                        budget_range=prop.budget_range if prop else "",
+                    )
+                except Exception as ai_err:
+                    print(f"   ⚠️ Lead AI analysis failed (non-fatal): {ai_err}")
 
                 log_property_lead(
                     customer_phone=f"+{clean_phone}",
                     customer_name="WhatsApp Client",
                     property_id=prop_id,
                     budget=prop.budget_range if prop else "N/A",
-                    timeline="Conversational",
+                    timeline=lead_intel.get("urgency", "Conversational"),
                     marketer_phone=agent_phone,
-                    raw_message=message_text,
+                    raw_message=f"Viewing: {viewing_answer} | Mortgage: {mortgage_answer}",
                     notification_sent=True
                 )
 
+                # Build agent notification with AI lead intel
+                temp = lead_intel.get("lead_temperature", "WARM")
+                temp_emoji = {"HOT": "🔥", "WARM": "🟡", "COLD": "🧊"}.get(temp, "❓")
+                score = lead_intel.get("confidence_score", "N/A")
+                summary = lead_intel.get("buyer_summary", "No AI summary available.")
+                action = lead_intel.get("recommended_action", "Review manually.")
+                red_flags = lead_intel.get("red_flags", "")
+
                 wa_direct_link = f"https://wa.me/{clean_phone}"
                 agent_card = (
-                    f"🚨 *NEW PROPERTY LEAD*\n\n"
+                    f"{temp_emoji} *NEW PROPERTY LEAD — {temp}* (confidence: {score}/100)\n\n"
                     f"👤 *Phone:* +{clean_phone}\n"
-                    f"🏢 *Property:* {prop_id}\n\n"
-                    f"⚡ *Reply instantly:* {wa_direct_link}"
+                    f"🏢 *Property:* {prop_id}\n"
+                    f"💰 *Financing:* {lead_intel.get('financing_status', 'unknown')}\n"
+                    f"📅 *Timeline:* {lead_intel.get('urgency', 'unknown')}\n\n"
+                    f"🤖 *AI Summary:* {summary}\n"
+                    f"⚡ *Next Step:* {action}\n"
                 )
+                if red_flags:
+                    agent_card += f"\n⚠️ *Flags:* {red_flags}\n"
+                agent_card += f"\n📲 *Reply instantly:* {wa_direct_link}"
+
                 await send_whatsapp_message(to=agent_phone, payload_type="text", content={"body": agent_card}, wbot_url=resolved_wbot_url)
                 ok = await _send(clean_phone, "text", {"body": "Thank you! 🙏 The listing agent has been notified and will be in touch shortly."})
                 print(f"   Closing message send result: {ok}")
