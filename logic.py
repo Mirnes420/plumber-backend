@@ -231,8 +231,7 @@ async def process_incoming_incident(
 
     # 3. Notification to Plumber
     notification_sent = False
-    if not demo:
-        try:
+    try:
             temp_url = None
             if image_bytes and not media_url:
                 print("Encoding image to base64 for direct WhatsApp transfer...")
@@ -286,10 +285,8 @@ async def process_incoming_incident(
                     sender_override=sender_override
                 )
             notification_sent = True
-        except Exception as e:
-            print(f"Failed to notify plumber: {e}")
-    else:
-        print("🔥 DEMO MODE: Skipping real plumber notification.")
+    except Exception as e:
+        print(f"Failed to notify plumber: {e}")
 
     return triage_result, notification_sent
 

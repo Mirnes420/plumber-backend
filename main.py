@@ -339,15 +339,12 @@ async def api_incident(
         else:
             reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
 
-        # CRITICAL FIX: Only send customer confirmation if NOT in demo mode
-        if not is_demo:
-            await send_whatsapp_message(
-                to=phone,
-                payload_type="text",
-                content={"body": reply_msg}
-            )
-        else:
-            print("🔥 DEMO MODE: Skipping customer confirmation message.")
+        # Send customer confirmation (demo no longer blocks this behavior)
+        await send_whatsapp_message(
+            to=phone,
+            payload_type="text",
+            content={"body": reply_msg}
+        )
 
         gear_info = triage_result.get("gear", "Standard kit")
         if isinstance(gear_info, list):
