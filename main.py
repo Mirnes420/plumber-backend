@@ -338,6 +338,71 @@ async def api_incident(
         else:
             reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
 
+        # CRITICAL FIX: Only send customer confirmation if NOT in demo mode
+        if not is_demo:
+            await send_whatsapp_message(
+                to=phone,
+                payload_type="text",
+                content={"body": reply_msg}
+            )
+        else:
+            print("🔥 DEMO MODE: Skipping customer confirmation message.")
+
+        gear_info = triage_result.get("gear", "Standard kit")
+        if isinstance(gear_info, list):
+            gear_info = ", ".join(str(x) for x in gear_info)
+
+        print("✅ Web form registration complete.")
+        # send the structured json as a message
+        return JSONResponse({
+            "status": "success", 
+            "urgency": urgency, 
+            "summary": summary,
+            "gear": gear_info
+        })
+
+    except Exception as api_err:
+        print(f"❌ CRITICAL API_INCIDENT EXCEPTION CRASH:")
+        print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
+        sys.stdout.flush()
+        return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
+
+    # check if demo mode is enabled
+    print(f"\n=================== WEB FORM INBOUND ===================")
+    is_demo = (demo == "true")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Type: {professional_type or 'plumber'} | Demo Mode: {is_demo}")
+    
+    try:
+        image_bytes = None
+        if image and image.filename:
+            image_bytes = await image.read()
+            print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
+            
+        from logic import process_incoming_incident
+        
+        # CHANGED: Passed location and customer_name as keyword arguments into your processing routine
+        triage_result, _ = await process_incoming_incident(
+            customer_phone=phone, 
+            body=description, 
+            location=location,
+            customer_name=customer_name,
+            media_url=None, 
+            sender_override=None,
+            plumber_override=plumber_id,
+            image_bytes=image_bytes,
+            demo=is_demo,
+            professional_type=professional_type or 'plumber',
+        )
+        
+        urgency = triage_result.get("urgency", "MEDIUM")
+        summary = triage_result.get("summary", "")
+        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency}")
+
+        if urgency == "HIGH":
+            reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe received your web request. We've flagged this as high priority: {summary}\n\nA plumber is being paged now!"
+        else:
+            reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
+
         await send_whatsapp_message(
             to=phone,
             payload_type="text",

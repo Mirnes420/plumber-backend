@@ -226,64 +226,65 @@ async def process_incoming_incident(
 
     # 3. Notification to Plumber
     notification_sent = False
-    try:
-        temp_url = None
-        if image_bytes and not media_url:
-            print("Encoding image to base64 for direct WhatsApp transfer...")
-            import base64
-            base64_str = base64.b64encode(image_bytes).decode('utf-8')
-            temp_url = f"data:image/jpeg;base64,{base64_str}"
-        
-        target_media_url = media_url or temp_url
-
-        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "🟢"
-        
-        # CHANGED: Formatted template strings to include name natively inside notifications
-        location_text = location if location else "Not provided"
-        name_text = customer_name if customer_name else "Not provided"
-        encoded_address = urllib.parse.quote_plus(location_text)
-
-        # 2. Construct cross-platform universal links
-        google_maps_link = f"https://maps.google.com/?q={encoded_address}"
-        apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
-        
-        full_summary = (
-            "\n"
-            "\n"
-            f" *{urgency_emoji}NEW EMERGENCY ALERT* [{urgency}]\n\n"
-            f"*Customer Name:* {name_text}\n"
-            f"*Address:* {location_text}\n\n"
+    if not demo:
+        try:
+            temp_url = None
+            if image_bytes and not media_url:
+                print("Encoding image to base64 for direct WhatsApp transfer...")
+                import base64
+                base64_str = base64.b64encode(image_bytes).decode('utf-8')
+                temp_url = f"data:image/jpeg;base64,{base64_str}"
             
-            f"*Navigate (Google Maps):* {google_maps_link}\n"
-            f"*Navigate (Apple Maps):* {apple_maps_link}\n\n"
+            target_media_url = media_url or temp_url
 
-            f"*Issue:* {summary}\n\n"
-            f"*Recommended Tools/Parts:* {gear_str}\n\n"
+            urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "🟢"
             
-            f"*Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
-            "\n"
-            "\n"
-        )
+            # CHANGED: Formatted template strings to include name natively inside notifications
+            location_text = location if location else "Not provided"
+            name_text = customer_name if customer_name else "Not provided"
+            encoded_address = urllib.parse.quote_plus(location_text)
 
-        if target_media_url:
-            """await send_dispatch_alert(target_plumber, full_summary):
-                          """
-            await send_whatsapp_message(
-                to=target_plumber,
-                payload_type="image",
-                content={"link": target_media_url, "caption": full_summary},
-                sender_override=sender_override
+            # 2. Construct cross-platform universal links
+            google_maps_link = f"https://maps.google.com/?q={encoded_address}"
+            apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
+            
+            full_summary = (
+                "\n"
+                "\n"
+                f" *{urgency_emoji}NEW EMERGENCY ALERT* [{urgency}]\n\n"
+                f"*Customer Name:* {name_text}\n"
+                f"*Address:* {location_text}\n\n"
+                
+                f"*Navigate (Google Maps):* {google_maps_link}\n"
+                f"*Navigate (Apple Maps):* {apple_maps_link}\n\n"
+
+                f"*Issue:* {summary}\n\n"
+                f"*Recommended Tools/Parts:* {gear_str}\n\n"
+                
+                f"*Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
+                "\n"
+                "\n"
             )
-        else:
-            await send_whatsapp_message(
-                to=target_plumber,
-                payload_type="text",
-                content={"body": full_summary},
-                sender_override=sender_override
-            )
-        notification_sent = True
-    except Exception as e:
-        print(f"Failed to notify plumber: {e}")
+
+            if target_media_url:
+                await send_whatsapp_message(
+                    to=target_plumber,
+                    payload_type="image",
+                    content={"link": target_media_url, "caption": full_summary},
+                    sender_override=sender_override
+                )
+            else:
+                await send_whatsapp_message(
+                    to=target_plumber,
+                    payload_type="text",
+                    content={"body": full_summary},
+                    sender_override=sender_override
+                )
+            notification_sent = True
+        except Exception as e:
+            print(f"Failed to notify plumber: {e}")
+    else:
+        print("🔥 DEMO MODE: Skipping real plumber notification.")
 
     return triage_result, notification_sent
 
