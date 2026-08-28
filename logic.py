@@ -139,6 +139,11 @@ async def send_whatsapp_message(to: str, payload_type: str = "text", content: di
                     if response.status_code in [200, 201]:
                         print(f"✅ wbot Send Success: {response.status_code}")
                         return True
+                    elif response.status_code in [429, 503, 403, 400]:
+                        # CRITICAL: Do NOT retry on rate limit, service unavailable, forbidden, or bad request.
+                        # Retrying just hammers the server and creates log spam.
+                        print(f"🚫 wbot API rejected (no retry): {response.status_code} - {response.text[:200]}")
+                        return False
                     else:
                         print(f"⚠️ wbot API Error: {response.status_code} - {response.text[:200]}")
                         if attempt < max_retries:
