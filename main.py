@@ -156,6 +156,27 @@ async def whatsapp_webhook(request: Request):
             return JSONResponse({"status": "ignored", "reason": "duplicate"})
         app.state.recent_inbound[fingerprint] = now_ts
 
+        # Ignore messages originating from internal/operator numbers (so operator
+        # replies don't get sent to the AI or re-processed). Configure a
+        # comma-separated list via `INTERNAL_WHATSAPP_NUMBERS` env var.
+        def _normalize_phone(n):
+            if not n:
+                return ""
+            s = str(n)
+            for ch in ["whatsapp:", "+", " ", "-", "(", ")"]:
+                s = s.replace(ch, "")
+            return "".join([c for c in s if c.isdigit()])
+
+        internal_cfg = os.getenv("INTERNAL_WHATSAPP_NUMBERS", "").split(",") if os.getenv("INTERNAL_WHATSAPP_NUMBERS") else []
+        internal_cfg = [x.strip() for x in internal_cfg if x and x.strip()]
+        if PLUMBER_NUMBER:
+            internal_cfg.append(PLUMBER_NUMBER)
+
+        norm_sender = _normalize_phone(customer_phone)
+        norm_internals = [_normalize_phone(x) for x in internal_cfg]
+        if norm_sender and norm_sender in norm_internals:
+            print(f"🔒 Ignoring message from internal sender: {customer_phone}")
+            return JSONResponse({"status": "ignored", "reason": "internal_sender"}, status_code=200)
         # Process asynchronously to ack immediately and avoid caller retries
         async def handle_incoming():
             try:
