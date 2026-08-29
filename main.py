@@ -21,6 +21,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
 from logic import send_whatsapp_message, process_incoming_property_message, build_property_pdf
 import jwt as pyjwt
+import asyncio
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
@@ -138,109 +139,86 @@ async def whatsapp_webhook(request: Request):
         if not customer_phone:
             print("❌ ERROR: Request received but no sender phone ('From') could be resolved.")
             return JSONResponse({"status": "error", "message": "No sender phone found"}, status_code=400)
-            
-        body_upper = body_raw.upper().replace(" ", "_").strip()
-        print(f"📥 Processing text from {customer_phone}: '{body_raw}' (Normalized: {body_upper})")
 
-        print(f"DEBUG: from_jid={from_jid}")
+        # Deduplicate incoming webhook events to avoid processing retries or duplicate forwards
+        # Keyed by sender + normalized body
+        if not hasattr(app.state, 'recent_inbound'):
+            app.state.recent_inbound = {}
+        fingerprint = f"{customer_phone}||{body_raw}"
+        now_ts = int(datetime.now(tz=timezone.utc).timestamp())
+        # cleanup old entries
+        cutoff = now_ts - 60  # 60s window
+        keys_to_delete = [k for k, v in app.state.recent_inbound.items() if v < cutoff]
+        for k in keys_to_delete:
+            del app.state.recent_inbound[k]
+        if fingerprint in app.state.recent_inbound:
+            print(f"⏳ Duplicate inbound webhook ignored for {customer_phone}")
+            return JSONResponse({"status": "ignored", "reason": "duplicate"})
+        app.state.recent_inbound[fingerprint] = now_ts
 
-        # Property management click-to-whatsapp auto-reply & conversational handler
-        is_prop_handled = await process_incoming_property_message(customer_phone, body_raw, wbot_url, from_jid)
-        if is_prop_handled:
-            return JSONResponse({"status": "ok"})
-
-        # 1. Handle Commands (Filtering in WhatsApp Chat)
-        filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
-        
-        if body_upper in filter_keywords:
-            print(f"DEBUG: Keyword identified: {body_upper}. Executing database query.")
-            from database import get_incidents
-            incidents = get_incidents()
-            print(f"DEBUG: Total database incidents retrieved: {len(incidents)}")
-
-            # defining emergency emojis
-            if body_upper in ["URGENT", "EMERGENCY"]:
-                print("🚨 Routing to High-Priority Alert Pipeline")
-                filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
-                title = "*🚨 Recent Urgent Tasks*"
-            elif body_upper in ["NOT_URGENT", "NON_EMERGENCY", "NO_EMERGENCY"]:
-                print("✅ Routing to Standard Log Archive")
-                filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
-                title = "*✅ Non-Urgent Tasks*"
-            else:  
-                print(f"⚡ Routing to Context Filter: {body_upper}")
-                filtered = incidents[:5]
-                title = "*📋 All Recent Tasks*"
-
-            if not filtered:
-                msg_text = f"{title}\nNo tasks found."
-            else:
-                msg_text = f"{title}\n\n"
-                for i in filtered:
-                    time_str = (
-                        i['timestamp'].strftime("%H:%M")
-                        if hasattr(i['timestamp'], 'strftime')
-                        else str(i['timestamp'])[:5]
-                    )
-                    msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
-
-            # FIXED: Payload type flipped to 'text' using our unbreakable keyword-based menus
-            print(f"DEBUG: Dispatching compiled list back to {customer_phone} via wbot API")
-            await send_whatsapp_message(
-                to=customer_phone,
-                payload_type="text",
-                content={
-                    "body": msg_text,
-                    "buttons": ["Emergency", "No Emergency", "All"] # Left for fallback metadata compatibility
-                }
-            )
-            print("✅ Webhook response processed clean.")
-            return JSONResponse({"status": "ok"})
-
-        # 2. Handle New Incidents
-        print(f"延 Handling as conversational input. Sending to AI engine...")
-        
-        incoming_media = form_data.get("MediaUrl0") if form_data else None
-        sender_override = form_data.get("FromNumber") if form_data else None
-        plumber_override = form_data.get("PlumberNumber") if form_data else None
-        image_file = form_data.get("MediaFile") if form_data else None
-        
-        image_bytes = None
-        if image_file:
+        # Process asynchronously to ack immediately and avoid caller retries
+        async def handle_incoming():
             try:
-                image_bytes = await image_file.read()
-                print(f"DEBUG: Attached image binary loaded size: {len(image_bytes)} bytes")
-            except Exception as e:
-                print(f"⚠️ Error reading file data streaming layers: {e}")
+                from logic import process_incoming_property_message, process_incoming_incident
 
-        from logic import process_incoming_incident
-        print("DEBUG: Executing process_incoming_incident pipeline...")
+                print(f"DEBUG (bg): from_jid={from_jid}")
+
+                is_prop_handled = await process_incoming_property_message(customer_phone, body_raw, wbot_url, from_jid)
+                if is_prop_handled:
+                    print("DEBUG (bg): property message handled; returning")
+                    return
+
+                # 1. Handle Commands (Filtering in WhatsApp Chat)
+                filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
+                body_upper = body_raw.upper().replace(" ", "_").strip()
+                if body_upper in filter_keywords:
+                    from database import get_incidents
+                    incidents = get_incidents()
+                    if body_upper in ["URGENT", "EMERGENCY"]:
+                        filtered = [i for i in incidents if i['urgency'] == "HIGH"][:5]
+                        title = "*🚨 Recent Urgent Tasks*"
+                    elif body_upper in ["NOT_URGENT", "NON_EMERGENCY", "NO_EMERGENCY"]:
+                        filtered = [i for i in incidents if i['urgency'] != "HIGH"][:5]
+                        title = "*✅ Non-Urgent Tasks*"
+                    else:
+                        filtered = incidents[:5]
+                        title = "*📋 All Recent Tasks*"
+
+                    if not filtered:
+                        msg_text = f"{title}\nNo tasks found."
+                    else:
+                        msg_text = f"{title}\n\n"
+                        for i in filtered:
+                            time_str = (
+                                i['timestamp'].strftime("%H:%M")
+                                if hasattr(i['timestamp'], 'strftime')
+                                else str(i['timestamp'])[:5]
+                            )
+                            msg_text += f"• [{i['urgency']}] {i['summary']}\n  Phone: {i['customer_phone']}\n\n"
+
+                    await send_whatsapp_message(
+                        to=customer_phone,
+                        payload_type="text",
+                        content={
+                            "body": msg_text,
+                            "buttons": ["Emergency", "No Emergency", "All"]
+                        }
+                    )
+                    return
+
+                # 2. Handle New Incidents
+                triage_result, _ = await process_incoming_incident(
+                    customer_phone, body_raw, None, None, None, None
+                )
+                # done
+            except Exception as bg_err:
+                print('Background processing error:', bg_err)
+
+        asyncio.create_task(handle_incoming())
+        # Immediately acknowledge to the caller to avoid retries
+        return JSONResponse({"status": "accepted"}, status_code=200)
+            
         
-        triage_result, _ = await process_incoming_incident(
-            customer_phone, body_raw, incoming_media, 
-            sender_override=sender_override,
-            plumber_override=plumber_override,
-            image_bytes=image_bytes
-        )
-        
-        urgency = triage_result.get("urgency", "MEDIUM")
-        summary = triage_result.get("summary", "")
-        print(f"DEBUG: AI Processing Complete. Urgency: {urgency} | Summary length: {len(summary)}")
-
-        # message to customer
-
-        if urgency == "HIGH":
-            reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe've flagged this as high priority: {summary}\n\nA plumber is being paged now."
-        else:
-            reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged. We will contact you shortly."
-
-        await send_whatsapp_message(
-            to=customer_phone,
-            payload_type="text",
-            content={"body": reply_msg}
-        )
-        print("✅ New incident tracked and confirmed successfully.")
-        return JSONResponse({"status": "ok"})
 
     except Exception as global_err:
         print(f"❌ CRITICAL WEBHOOK EXCEPTION CRASH:")
