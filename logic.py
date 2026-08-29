@@ -205,6 +205,14 @@ async def process_incoming_incident(
     triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo, professional_type=professional_type)
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
+
+    # Safety gate: if this is NOT a demo submission and we have no customer
+    # identifying info (name or location), do not dispatch or notify the
+    # plumber. This prevents operator/QA WhatsApp messages like "will it
+    # work?" from being fed to the AI and generating false alerts.
+    if not demo and (not customer_name and not location):
+        print("🔕 Notification suppressed: no customer_name or location and not demo")
+        return triage_result, False
     
     # 2. Log to Database
     ai_engine_used = triage_result.get("ai_engine", "Unknown")

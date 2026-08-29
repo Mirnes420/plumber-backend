@@ -177,6 +177,14 @@ async def whatsapp_webhook(request: Request):
         if norm_sender and norm_sender in norm_internals:
             print(f"🔒 Ignoring message from internal sender: {customer_phone}")
             return JSONResponse({"status": "ignored", "reason": "internal_sender"}, status_code=200)
+        # Also support ignoring by raw JID (e.g. 15015860002951@lid) through
+        # INTERNAL_WHATSAPP_JIDS env var. This helps when messages arrive with a
+        # linked-device jid that better identifies operator devices.
+        internal_jids = os.getenv("INTERNAL_WHATSAPP_JIDS", "").split(",") if os.getenv("INTERNAL_WHATSAPP_JIDS") else []
+        internal_jids = [x.strip() for x in internal_jids if x and x.strip()]
+        if from_jid and from_jid in internal_jids:
+            print(f"🔒 Ignoring message from internal JID: {from_jid}")
+            return JSONResponse({"status": "ignored", "reason": "internal_jid"}, status_code=200)
         # Process asynchronously to ack immediately and avoid caller retries
         async def handle_incoming():
             try:
