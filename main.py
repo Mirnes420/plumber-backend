@@ -808,18 +808,23 @@ async def create_property(request: Request):
         budget_range = form.get("budget_range") or None
 
         # Grab files and strings completely separately
-        image_file = form.get("image_file")
+        image_files = form.getlist("image_files")
         image_url_str = form.get("image_url")
         pdf_file = form.get("pdf_file")
         pdf_url_str = form.get("pdf_url")
 
         # --- Image ---
-        if hasattr(image_file, "filename") and image_file.filename:
-            ext = os.path.splitext(image_file.filename)[1]
-            image_name = f"{uuid.uuid4()}{ext}"
-            image_path = os.path.join(upload_dir, image_name)
-            save_upload_file(image_file, image_path)
-            image_url = f"/uploads/{image_name}"
+        uploaded_image_urls = []
+        for img_file in image_files:
+            if hasattr(img_file, "filename") and img_file.filename:
+                ext = os.path.splitext(img_file.filename)[1]
+                image_name = f"{uuid.uuid4()}{ext}"
+                image_path = os.path.join(upload_dir, image_name)
+                save_upload_file(img_file, image_path)
+                uploaded_image_urls.append(f"/uploads/{image_name}")
+                
+        if uploaded_image_urls:
+            image_url = ",".join(uploaded_image_urls)
         elif isinstance(image_url_str, str) and image_url_str.strip():
             image_url = image_url_str
         else:
@@ -931,6 +936,50 @@ async def list_properties():
                 p["portal_links"] = cur.fetchall()
                 
             return props
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+@app.get("/api/properties/{property_id}/assets")
+async def get_property_assets(property_id: str, request: Request):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT image_url, pdf_url FROM properties WHERE id = %s", (property_id,))
+            prop = cur.fetchone()
+            if not prop:
+                raise HTTPException(status_code=404, detail="Property not found")
+            
+            assets = []
+            base_url = str(request.base_url).rstrip("/")
+            
+            # Helper to make full url
+            def make_url(url_val):
+                if not url_val: return None
+                url_val = url_val.strip()
+                if url_val.startswith("http://") or url_val.startswith("https://"):
+                    return url_val
+                return f"{base_url}{url_val if url_val.startswith('/') else '/' + url_val}"
+
+            if prop["image_url"]:
+                # support comma separated images
+                images = [i.strip() for i in prop["image_url"].split(",")]
+                for img in images:
+                    full_url = make_url(img)
+                    if full_url:
+                        assets.append({"url": full_url})
+                        
+            if prop["pdf_url"]:
+                full_pdf = make_url(prop["pdf_url"])
+                if full_pdf:
+                    assets.append({
+                        "url": full_pdf,
+                        "mimetype": "application/pdf",
+                        "fileName": f"{property_id}.pdf"
+                    })
+                    
+            return assets
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
