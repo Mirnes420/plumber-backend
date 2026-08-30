@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean
+from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.sql import func
@@ -107,6 +107,33 @@ class PropertyChatState(Base):
     state = Column(String, default="awaiting_viewing")
     viewing_answer = Column(Text, nullable=True)   # stores buyer's viewing availability reply
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class PropertyLink(Base):
+    __tablename__ = "property_links"
+
+    id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
+    property_id = Column(String, nullable=False)
+    url = Column(Text, nullable=False)
+    source_tag = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+from sqlalchemy.dialects.postgresql import JSONB
+
+class Lead(Base):
+    __tablename__ = "leads"
+
+    id = Column(Integer, primary_key=True) # SERIAL in Node.js
+    phone = Column(String)
+    property_code = Column(String)
+    source = Column(String)
+    availability = Column(String)
+    payment = Column(String)
+    status = Column(String)
+    metadata_ = Column("metadata", JSONB)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    last_notified_at = Column(DateTime(timezone=True), nullable=True)
+
 
 
 

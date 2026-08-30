@@ -675,6 +675,7 @@ class PropertyResponse(BaseModel):
     budget_range: Optional[str]
     image_url: Optional[str]
     pdf_url: Optional[str]
+    portal_links: Optional[List[dict]] = []
 
 
 # --- PROPERTY MANAGER ENDPOINTS ---
@@ -879,7 +880,26 @@ async def create_property(request: Request):
                 ),
             )
             prop = cur.fetchone()
+            
+            # Save portal links if provided
+            portal_links_raw = form.get("portal_links") if "multipart/form-data" in content_type else getattr(payload, "portal_links", None)
+            if portal_links_raw:
+                try:
+                    links = json.loads(portal_links_raw) if isinstance(portal_links_raw, str) else portal_links_raw
+                    for link in links:
+                        cur.execute(
+                            "INSERT INTO property_links (property_id, url, source_tag) VALUES (%s, %s, %s)",
+                            (prop_id, link.get("url"), link.get("source"))
+                        )
+                except Exception as e:
+                    print(f"Error saving portal links: {e}")
+            
             conn.commit()
+            
+            # Fetch links to return
+            cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (prop_id,))
+            prop["portal_links"] = cur.fetchall()
+            
             return prop
     except psycopg2.IntegrityError:
         conn.rollback()
@@ -900,16 +920,139 @@ async def list_properties():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT id, manager_id, title, address, description, budget_range, image_url, pdf_url
-                FROM properties
-                ORDER BY created_at DESC
+                SELECT p.id, p.manager_id, p.title, p.address, p.description, p.budget_range, p.image_url, p.pdf_url
+                FROM properties p
                 """
             )
-            return cur.fetchall()
+            props = cur.fetchall()
+            
+            for p in props:
+                cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (p["id"],))
+                p["portal_links"] = cur.fetchall()
+                
+            return props
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
 
+class PropertyUpdate(BaseModel):
+    title: Optional[str] = None
+    address: Optional[str] = None
+    description: Optional[str] = None
+    budget_range: Optional[str] = None
+    image_url: Optional[str] = None
+    pdf_url: Optional[str] = None
 
-# PROPERTIES ======================================================================================================== # 
+@app.put("/api/properties/{property_id}")
+async def update_property(property_id: str, payload: PropertyUpdate):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            values = []
+            if payload.title is not None:
+                updates.append("title = %s")
+                values.append(payload.title)
+            if payload.address is not None:
+                updates.append("address = %s")
+                values.append(payload.address)
+            if payload.description is not None:
+                updates.append("description = %s")
+                values.append(payload.description)
+            if payload.budget_range is not None:
+                updates.append("budget_range = %s")
+                values.append(payload.budget_range)
+            if payload.image_url is not None:
+                updates.append("image_url = %s")
+                values.append(payload.image_url)
+            if payload.pdf_url is not None:
+                updates.append("pdf_url = %s")
+                values.append(payload.pdf_url)
+                
+            if not updates:
+                return {"status": "success"}
+                
+            values.append(property_id)
+            query = f"UPDATE properties SET {', '.join(updates)} WHERE id = %s"
+            cur.execute(query, values)
+            conn.commit()
+            return {"status": "success"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+# PROPERTIES ======================================================================================================== # # --- HOT LEAD NOTIFICATION ---
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+class HotLeadNotifyRequest(BaseModel):
+    lead: dict
+    managerEmail: Optional[str] = None
+    reminder: Optional[bool] = False
+
+@app.post("/api/notify/hot-lead")
+async def notify_hot_lead(payload: HotLeadNotifyRequest):
+    lead = payload.lead
+    manager_email = payload.managerEmail
+    reminder = payload.reminder
+    
+    if not manager_email:
+        return {"status": "skipped", "reason": "No manager email provided"}
+
+    # Extract lead details
+    prop_code = lead.get("property_code", "Unknown")
+    phone = lead.get("phone", "Unknown")
+    payment = lead.get("payment", "Unknown")
+    availability = lead.get("availability", "Unknown")
+    source = lead.get("source", "Unknown")
+    
+    metadata = lead.get("metadata", {})
+    name = metadata.get("name", "Unknown Buyer")
+    
+    subject = f"{'REMINDER: ' if reminder else ''}Hot Lead — {prop_code} — {name}"
+    
+    body = f"""
+Hot Lead Details:
+----------------
+Property: {prop_code}
+Buyer Name: {name}
+Phone: +{phone}
+Payment: {payment}
+Availability: {availability}
+Source: {source}
+
+Please follow up immediately.
+"""
+
+    smtp_server = os.environ.get("SMTP_SERVER")
+    smtp_port = os.environ.get("SMTP_PORT", 587)
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_pass = os.environ.get("SMTP_PASSWORD")
+
+    if smtp_server and smtp_user and smtp_pass:
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = smtp_user
+            msg['To'] = manager_email
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            text = msg.as_string()
+            server.sendmail(smtp_user, manager_email, text)
+            server.quit()
+            print(f"✅ Hot-lead email sent to {manager_email}")
+        except Exception as e:
+            print(f"❌ Failed to send hot-lead email: {e}")
+            return {"status": "error", "detail": str(e)}
+    else:
+        print(f"⚠️ SMTP not configured. Would send email to {manager_email}:")
+        print(f"Subject: {subject}\nBody: {body}")
+        
+    return {"status": "success"}
