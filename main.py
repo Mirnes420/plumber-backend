@@ -948,7 +948,7 @@ async def get_property_assets(property_id: str, request: Request):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT image_url, pdf_url FROM properties WHERE id = %s", (property_id,))
+            cur.execute("SELECT image_url, p.title, p.address, pdf_url FROM properties WHERE id = %s", (property_id,))
             prop = cur.fetchone()
             if not prop:
                 raise HTTPException(status_code=404, detail="Property not found")
