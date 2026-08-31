@@ -935,6 +935,8 @@ async def list_properties():
                 cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (p["id"],))
                 p["portal_links"] = cur.fetchall()
                 
+            print("####################################################################")   
+            print("props gotten", props)
             return props
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -978,6 +980,9 @@ async def get_property_assets(property_id: str, request: Request):
                         "mimetype": "application/pdf",
                         "fileName": f"{property_id}.pdf"
                     })
+
+            print("####################################################################")
+            print(f"DEBUG: Returning assets for property {property_id}: {assets}")
                     
             return assets
     except Exception as e:
