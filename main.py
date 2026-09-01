@@ -948,48 +948,58 @@ async def get_property_assets(property_id: str, request: Request):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT image_url, p.title, p.address, pdf_url FROM properties WHERE id = %s", (property_id,))
+            # Fixed: removed invalid 'p.' alias since table isn't aliased
+            cur.execute(
+                "SELECT image_url, title, address, pdf_url FROM properties WHERE id = %s",
+                (property_id,)
+            )
             prop = cur.fetchone()
             if not prop:
                 raise HTTPException(status_code=404, detail="Property not found")
-            
+
             assets = []
             base_url = str(request.base_url).rstrip("/")
-            
-            # Helper to make full url
+
             def make_url(url_val):
-                if not url_val: return None
+                if not url_val:
+                    return None
                 url_val = url_val.strip()
                 if url_val.startswith("http://") or url_val.startswith("https://"):
                     return url_val
                 return f"{base_url}{url_val if url_val.startswith('/') else '/' + url_val}"
 
             if prop["image_url"]:
-                # support comma separated images
                 images = [i.strip() for i in prop["image_url"].split(",")]
                 for img in images:
                     full_url = make_url(img)
                     if full_url:
                         assets.append({"url": full_url})
-                        
+
             if prop["pdf_url"]:
                 full_pdf = make_url(prop["pdf_url"])
                 if full_pdf:
                     assets.append({
                         "url": full_pdf,
                         "mimetype": "application/pdf",
-                        "fileName": f"{property_id}.pdf"
+                        "fileName": f"{property_id}.pdf",
                     })
 
             print("####################################################################")
             print(f"DEBUG: Returning assets for property {property_id}: {assets}")
-                    
-            return assets
+
+            # Return title/address alongside the asset list
+            return {
+                "id": property_id,
+                "title": prop["title"],
+                "address": prop["address"],
+                "assets": assets,
+            }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
 
+        
 class PropertyUpdate(BaseModel):
     title: Optional[str] = None
     address: Optional[str] = None
