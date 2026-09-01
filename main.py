@@ -758,20 +758,83 @@ def save_upload_file(upload_file: UploadFile, destination: str) -> str:
     return destination
 
 # --- PROPERTY ENDPOINTS ---
+import os
+import io
+import uuid
+import json
+from PIL import Image
+from supabase import create_client, Client
+
+# Initialize Supabase Client
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET", "property-assets")
+
+supabase_client: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+def compress_and_upload_image(file_obj, max_width=1600, quality=80) -> str:
+    """Compresses an image to WebP format in memory and uploads it to Supabase Storage."""
+    if not supabase_client:
+        raise Exception("Supabase credentials are not configured in environment variables.")
+
+    # 1. Read file bytes into Pillow
+    file_bytes = file_obj.file.read()
+    img = Image.open(io.BytesIO(file_bytes))
+
+    # 2. Convert color mode if necessary (e.g., RGBA/P to RGB for WebP compatibility)
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+
+    # 3. Downscale if dimensions exceed max_width (maintains aspect ratio)
+    if img.width > max_width:
+        aspect_ratio = img.height / img.width
+        new_height = int(max_width * aspect_ratio)
+        img = img.resize((max_width, new_height), Image.Resampling.LANCZOS)
+
+    # 4. Save to in-memory buffer as compressed WebP
+    buffer = io.BytesIO()
+    img.save(buffer, format="WEBP", quality=quality, optimize=True)
+    buffer.seek(0)
+
+    # 5. Upload to Supabase Storage
+    filename = f"properties/images/{uuid.uuid4()}.webp"
+    supabase_client.storage.from_(SUPABASE_BUCKET).upload(
+        path=filename,
+        file=buffer.getvalue(),
+        file_options={"content-type": "image/webp"}
+    )
+
+    # 6. Retrieve public URL
+    return supabase_client.storage.from_(SUPABASE_BUCKET).get_public_url(filename)
+
+
+def upload_pdf_file(file_obj, filename_hint="document.pdf") -> str:
+    """Uploads a PDF file directly to Supabase Storage without modification."""
+    if not supabase_client:
+        raise Exception("Supabase credentials are not configured in environment variables.")
+
+    file_bytes = file_obj.file.read()
+    ext = os.path.splitext(filename_hint)[1] or ".pdf"
+    storage_path = f"properties/pdfs/{uuid.uuid4()}{ext}"
+
+    supabase_client.storage.from_(SUPABASE_BUCKET).upload(
+        path=storage_path,
+        file=file_bytes,
+        file_options={"content-type": "application/pdf"}
+    )
+
+    return supabase_client.storage.from_(SUPABASE_BUCKET).get_public_url(storage_path)
+
+
 @app.post("/api/properties", response_model=PropertyResponse)
 async def create_property(request: Request):
     content_type = request.headers.get("content-type", "")
-    
-    # Configure where files are stored (use env var or adjust as needed)
-    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/uploads")
-    os.makedirs(upload_dir, exist_ok=True)
 
-    # Variables to collect
     prop_id = manager_id = title = address = None
     description = budget_range = image_url = pdf_url = None
 
     # ------------------------------------------------------------------
-    # A) JSON mode: client sends PropertyCreate as JSON with URL strings
+    # A) JSON mode
     # ------------------------------------------------------------------
     if "application/json" in content_type:
         try:
@@ -779,7 +842,6 @@ async def create_property(request: Request):
         except json.JSONDecodeError:
             raise HTTPException(status_code=400, detail="Invalid JSON body")
 
-        # Reuse your existing Pydantic rules for JSON payloads
         try:
             payload = PropertyCreate(**body)
         except ValidationError as e:
@@ -795,7 +857,7 @@ async def create_property(request: Request):
         pdf_url       = payload.pdf_url
 
     # ------------------------------------------------------------------
-    # B) Multipart mode: client sends form fields + optional file uploads
+    # B) Multipart mode: Compress images & stream to Supabase
     # ------------------------------------------------------------------
     elif "multipart/form-data" in content_type:
         form = await request.form()
@@ -807,22 +869,21 @@ async def create_property(request: Request):
         description  = form.get("description") or None
         budget_range = form.get("budget_range") or None
 
-        # Grab files and strings completely separately
         image_files = form.getlist("image_files")
         image_url_str = form.get("image_url")
         pdf_file = form.get("pdf_file")
         pdf_url_str = form.get("pdf_url")
 
-        # --- Image ---
+        # --- Process & Compress Images ---
         uploaded_image_urls = []
         for img_file in image_files:
             if hasattr(img_file, "filename") and img_file.filename:
-                ext = os.path.splitext(img_file.filename)[1]
-                image_name = f"{uuid.uuid4()}{ext}"
-                image_path = os.path.join(upload_dir, image_name)
-                save_upload_file(img_file, image_path)
-                uploaded_image_urls.append(f"/uploads/{image_name}")
-                
+                try:
+                    public_url = compress_and_upload_image(img_file)
+                    uploaded_image_urls.append(public_url)
+                except Exception as upload_err:
+                    print(f"Failed to compress/upload image: {upload_err}")
+
         if uploaded_image_urls:
             image_url = ",".join(uploaded_image_urls)
         elif isinstance(image_url_str, str) and image_url_str.strip():
@@ -830,19 +891,19 @@ async def create_property(request: Request):
         else:
             image_url = None
 
-        # --- PDF ---
+        # --- Process PDF ---
         if hasattr(pdf_file, "filename") and pdf_file.filename:
-            ext = os.path.splitext(pdf_file.filename)[1]
-            pdf_name = f"{uuid.uuid4()}{ext}"
-            pdf_path = os.path.join(upload_dir, pdf_name)
-            save_upload_file(pdf_file, pdf_path)
-            pdf_url = f"/uploads/{pdf_name}"
+            try:
+                pdf_url = upload_pdf_file(pdf_file, filename_hint=pdf_file.filename)
+            except Exception as upload_err:
+                print(f"Failed to upload PDF: {upload_err}")
+                pdf_url = None
         elif isinstance(pdf_url_str, str) and pdf_url_str.strip():
             pdf_url = pdf_url_str
         else:
             pdf_url = None
 
-        # Dynamic PDF brochure builder fallback (Requirement 0)
+        # Dynamic PDF brochure builder fallback
         if not pdf_url:
             compiled_pdf = build_property_pdf(
                 property_id=prop_id,
@@ -858,7 +919,7 @@ async def create_property(request: Request):
         raise HTTPException(status_code=415, detail="Unsupported Media Type")
 
     # ------------------------------------------------------------------
-    # Database insert (same logic as before)
+    # Database insert
     # ------------------------------------------------------------------
     conn = get_db_connection()
     try:
@@ -886,7 +947,6 @@ async def create_property(request: Request):
             )
             prop = cur.fetchone()
             
-            # Save portal links if provided
             portal_links_raw = form.get("portal_links") if "multipart/form-data" in content_type else getattr(payload, "portal_links", None)
             if portal_links_raw:
                 try:
@@ -901,7 +961,6 @@ async def create_property(request: Request):
             
             conn.commit()
             
-            # Fetch links to return
             cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (prop_id,))
             prop["portal_links"] = cur.fetchall()
             
@@ -918,37 +977,12 @@ async def create_property(request: Request):
     finally:
         conn.close()
 
-@app.get("/api/properties", response_model=List[PropertyResponse])
-async def list_properties():
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT p.id, p.manager_id, p.title, p.address, p.description, p.budget_range, p.image_url, p.pdf_url
-                FROM properties p
-                """
-            )
-            props = cur.fetchall()
-            
-            for p in props:
-                cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (p["id"],))
-                p["portal_links"] = cur.fetchall()
-                
-            print("####################################################################")   
-            print("props gotten", props)
-            return props
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 
 @app.get("/api/properties/{property_id}/assets")
 async def get_property_assets(property_id: str, request: Request):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            # Fixed: removed invalid 'p.' alias since table isn't aliased
             cur.execute(
                 "SELECT image_url, title, address, pdf_url FROM properties WHERE id = %s",
                 (property_id,)
@@ -958,36 +992,21 @@ async def get_property_assets(property_id: str, request: Request):
                 raise HTTPException(status_code=404, detail="Property not found")
 
             assets = []
-            base_url = str(request.base_url).rstrip("/")
 
-            def make_url(url_val):
-                if not url_val:
-                    return None
-                url_val = url_val.strip()
-                if url_val.startswith("http://") or url_val.startswith("https://"):
-                    return url_val
-                return f"{base_url}{url_val if url_val.startswith('/') else '/' + url_val}"
-
+            # Since URLs stored in Supabase start with http/https, they pass right through
             if prop["image_url"]:
                 images = [i.strip() for i in prop["image_url"].split(",")]
                 for img in images:
-                    full_url = make_url(img)
-                    if full_url:
-                        assets.append({"url": full_url})
+                    if img:
+                        assets.append({"url": img})
 
             if prop["pdf_url"]:
-                full_pdf = make_url(prop["pdf_url"])
-                if full_pdf:
-                    assets.append({
-                        "url": full_pdf,
-                        "mimetype": "application/pdf",
-                        "fileName": f"{property_id}.pdf",
-                    })
+                assets.append({
+                    "url": prop["pdf_url"],
+                    "mimetype": "application/pdf",
+                    "fileName": f"{property_id}.pdf",
+                })
 
-            print("####################################################################")
-            print(f"DEBUG: Returning assets for property {property_id}: {assets}")
-
-            # Return title/address alongside the asset list
             return {
                 "id": property_id,
                 "title": prop["title"],
