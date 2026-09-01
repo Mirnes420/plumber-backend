@@ -25,6 +25,7 @@ packaging==26.3
 pillow==12.3.0
 postgrest==2.31.0
 propcache==0.5.2
+psycopg2-binary==2.9.12
 pyasn1==0.6.4
 pyasn1_modules==0.4.2
 pycparser==3.0
