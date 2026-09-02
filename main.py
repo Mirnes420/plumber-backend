@@ -889,7 +889,7 @@ async def create_property(request: Request):
         conn.rollback()
         raise HTTPException(
             status_code=400,
-            detail="Property ID already exists or manager ID is invalid."
+            detail=f"Property ID already exists or manager ID is invalid. propertyid = {prop_id}, managerid = {manager_id}"
         )
     except Exception as e:
         conn.rollback()
