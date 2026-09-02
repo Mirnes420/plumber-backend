@@ -647,6 +647,21 @@ async def admin_update_status(body: AdminStatusRequest, request: Request):
 
 # PROPERTIES ======================================================================================================== # 
 
+# --- IMPORTS ---
+import base64
+import os
+import shutil
+import uuid
+import json
+from fastapi import Request, UploadFile, HTTPException, status
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
 # --- SCHEMAS ---
 class PropertyManagerCreate(BaseModel):
     name: str
@@ -716,17 +731,6 @@ async def list_property_managers():
     finally:
         conn.close()
 
-import base64
-import os
-import shutil
-import uuid
-import json
-from fastapi import Request, UploadFile, HTTPException, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request, exc):
     """
@@ -788,10 +792,7 @@ async def create_property(request: Request):
         prop_id       = payload.id
         manager_id    = payload.manager_id
         title         = payload.title
-        address       = payload.address
-        description   = payload.description
         budget_range  = payload.budget_range
-        image_url     = payload.image_url
         pdf_url       = payload.pdf_url
 
     # ------------------------------------------------------------------
@@ -803,32 +804,13 @@ async def create_property(request: Request):
         prop_id      = form.get("id")
         manager_id   = form.get("manager_id")
         title        = form.get("title")
-        address      = form.get("address")
         description  = form.get("description") or None
         budget_range = form.get("budget_range") or None
 
         # Grab files and strings completely separately
-        image_files = form.getlist("image_files")
-        image_url_str = form.get("image_url")
         pdf_file = form.get("pdf_file")
         pdf_url_str = form.get("pdf_url")
 
-        # --- Image ---
-        uploaded_image_urls = []
-        for img_file in image_files:
-            if hasattr(img_file, "filename") and img_file.filename:
-                ext = os.path.splitext(img_file.filename)[1]
-                image_name = f"{uuid.uuid4()}{ext}"
-                image_path = os.path.join(upload_dir, image_name)
-                save_upload_file(img_file, image_path)
-                uploaded_image_urls.append(f"/uploads/{image_name}")
-                
-        if uploaded_image_urls:
-            image_url = ",".join(uploaded_image_urls)
-        elif isinstance(image_url_str, str) and image_url_str.strip():
-            image_url = image_url_str
-        else:
-            image_url = None
 
         # --- PDF ---
         if hasattr(pdf_file, "filename") and pdf_file.filename:
@@ -866,21 +848,18 @@ async def create_property(request: Request):
             cur.execute(
                 """
                 INSERT INTO properties (
-                    id, manager_id, title, address, description,
-                    budget_range, image_url, pdf_url
+                    id, manager_id, title,
+                    budget_range, pdf_url
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, manager_id, title, address, description,
-                          budget_range, image_url, pdf_url
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id, manager_id, title,
+                          budget_range, pdf_url
                 """,
                 (
                     str(prop_id).upper().strip(),
                     manager_id,
                     title,
-                    address,
-                    description,
                     budget_range,
-                    image_url,
                     pdf_url,
                 ),
             )
@@ -925,7 +904,7 @@ async def list_properties():
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT p.id, p.manager_id, p.title, p.address, p.description, p.budget_range, p.image_url, p.pdf_url
+                SELECT p.id, p.manager_id, p.title, p.budget_range, p.pdf_url
                 FROM properties p
                 """
             )
@@ -948,7 +927,7 @@ async def get_property_assets(property_id: str, request: Request):
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT image_url, p.title, p.address, pdf_url FROM properties WHERE id = %s", (property_id,))
+            cur.execute("SELECT p.title, pdf_url FROM properties WHERE id = %s", (property_id,))
             prop = cur.fetchone()
             if not prop:
                 raise HTTPException(status_code=404, detail="Property not found")
@@ -963,14 +942,6 @@ async def get_property_assets(property_id: str, request: Request):
                 if url_val.startswith("http://") or url_val.startswith("https://"):
                     return url_val
                 return f"{base_url}{url_val if url_val.startswith('/') else '/' + url_val}"
-
-            if prop["image_url"]:
-                # support comma separated images
-                images = [i.strip() for i in prop["image_url"].split(",")]
-                for img in images:
-                    full_url = make_url(img)
-                    if full_url:
-                        assets.append({"url": full_url})
                         
             if prop["pdf_url"]:
                 full_pdf = make_url(prop["pdf_url"])
@@ -1008,18 +979,9 @@ async def update_property(property_id: str, payload: PropertyUpdate):
             if payload.title is not None:
                 updates.append("title = %s")
                 values.append(payload.title)
-            if payload.address is not None:
-                updates.append("address = %s")
-                values.append(payload.address)
-            if payload.description is not None:
-                updates.append("description = %s")
-                values.append(payload.description)
             if payload.budget_range is not None:
                 updates.append("budget_range = %s")
                 values.append(payload.budget_range)
-            if payload.image_url is not None:
-                updates.append("image_url = %s")
-                values.append(payload.image_url)
             if payload.pdf_url is not None:
                 updates.append("pdf_url = %s")
                 values.append(payload.pdf_url)
@@ -1038,10 +1000,6 @@ async def update_property(property_id: str, payload: PropertyUpdate):
     finally:
         conn.close()
 
-# PROPERTIES ======================================================================================================== # # --- HOT LEAD NOTIFICATION ---
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 
 class HotLeadNotifyRequest(BaseModel):
     lead: dict
@@ -1051,7 +1009,7 @@ class HotLeadNotifyRequest(BaseModel):
 @app.post("/api/notify/hot-lead")
 async def notify_hot_lead(payload: HotLeadNotifyRequest):
     lead = payload.lead
-    manager_email = payload.managerEmail
+    manager_email = "nmirnes32@gmail.com" #payload.managerEmail
     reminder = payload.reminder
     
     if not manager_email:
@@ -1070,17 +1028,17 @@ async def notify_hot_lead(payload: HotLeadNotifyRequest):
     subject = f"{'REMINDER: ' if reminder else ''}Hot Lead — {prop_code} — {name}"
     
     body = f"""
-Hot Lead Details:
-----------------
-Property: {prop_code}
-Buyer Name: {name}
-Phone: +{phone}
-Payment: {payment}
-Availability: {availability}
-Source: {source}
+    Lead Lead Details:
+    ----------------
+    Property: {prop_code}
+    Buyer Name: {name}
+    Phone: +{phone}
+    Payment: {payment}
+    Availability: {availability}
+    Source: {source}
 
-Please follow up immediately.
-"""
+    Please follow up immediately.
+    """
 
     smtp_server = os.environ.get("SMTP_SERVER")
     smtp_port = os.environ.get("SMTP_PORT", 587)
