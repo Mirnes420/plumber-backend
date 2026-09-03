@@ -848,12 +848,10 @@ async def create_property(request: Request):
             cur.execute(
                 """
                 INSERT INTO properties (
-                    id, manager_id, title,
-                    budget_range, pdf_url
+                    id, manager_id, title, budget_range, pdf_url
                 )
-                VALUES (%s, %s, %s, %s, %s)
-                RETURNING id, manager_id, title,
-                          budget_range, pdf_url
+                VALUES (%s, %s::uuid, %s, %s, %s)
+                RETURNING id, manager_id, title, budget_range, pdf_url
                 """,
                 (
                     str(prop_id).upper().strip(),
