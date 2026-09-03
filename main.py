@@ -676,19 +676,13 @@ class PropertyCreate(BaseModel):
     id: str = Field(..., description="Unique Property ID (e.g. ATH-39)")
     manager_id: str
     title: str
-    address: str
-    description: Optional[str] = None
     budget_range: Optional[str] = None
-    image_url: Optional[str] = None
     pdf_url: Optional[str] = None
 class PropertyResponse(BaseModel):
     id: str
     manager_id: Optional[str]
     title: str
-    address: str
-    description: Optional[str]
     budget_range: Optional[str]
-    image_url: Optional[str]
     pdf_url: Optional[str]
     portal_links: Optional[List[dict]] = []
 
