@@ -885,11 +885,13 @@ async def create_property(request: Request):
             prop["portal_links"] = cur.fetchall()
             
             return prop
-    except psycopg2.IntegrityError:
+    except psycopg2.IntegrityError as e:
         conn.rollback()
+        print("FAILED CONSTRAINT:", e.diag.constraint_name)
+        print("DETAIL:", e.diag.message_detail)
         raise HTTPException(
             status_code=400,
-            detail=f"Property ID already exists or manager ID is invalid. propertyid = {prop_id}, managerid = {manager_id}"
+            detail=f"Constraint [{e.diag.constraint_name}] failed: {e.diag.message_detail}"
         )
     except Exception as e:
         conn.rollback()
