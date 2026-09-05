@@ -92,7 +92,10 @@ class Property(Base):
     id = Column(String, primary_key=True)
     manager_id = Column(String)
     title = Column(String, nullable=False)
-    address = Column(String, nullable=False)
+    address = Column(String, nullable=True)
+    price = Column(String)
+    # Make title/address optional to match flexible input requirements
+    # (some callers only provide URL + optional price)
     description = Column(Text)
     budget_range = Column(String)
     image_url = Column(String)

@@ -955,15 +955,15 @@ async def get_property_assets(property_id: str, request: Request):
     finally:
         conn.close()
 
-class PropertyUpdate(BaseModel):
-    title: Optional[str] = None
+class PropertyCreate(BaseModel):
+    id: str = Field(..., description="Unique Property ID (e.g. ATH-39)")
+    manager_id: str
+    title: str
     address: Optional[str] = None
     description: Optional[str] = None
     budget_range: Optional[str] = None
     image_url: Optional[str] = None
     pdf_url: Optional[str] = None
-
-@app.put("/api/properties/{property_id}")
 async def update_property(property_id: str, payload: PropertyUpdate):
     conn = get_db_connection()
     try:
