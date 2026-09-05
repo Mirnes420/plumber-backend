@@ -916,6 +916,41 @@ async def list_properties():
     finally:
         conn.close()
 
+
+
+
+@app.put("/api/properties/{property_id}")
+async def update_property(property_id: str, payload: PropertyUpdate):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            updates = []
+            values = []
+            if payload.title is not None:
+                updates.append("title = %s")
+                values.append(payload.title)
+            if payload.budget_range is not None:
+                updates.append("budget_range = %s")
+                values.append(payload.budget_range)
+            if payload.pdf_url is not None:
+                updates.append("pdf_url = %s")
+                values.append(payload.pdf_url)
+                
+            if not updates:
+                return {"status": "success"}
+                
+            values.append(property_id)
+            query = f"UPDATE properties SET {', '.join(updates)} WHERE id = %s"
+            cur.execute(query, values)
+            conn.commit()
+            return {"status": "success"}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+        
 @app.get("/api/properties/{property_id}/assets")
 async def get_property_assets(property_id: str, request: Request):
     conn = get_db_connection()
