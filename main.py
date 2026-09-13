@@ -341,10 +341,9 @@ async def api_incident(
         summary = triage_result.get("summary", "")
         print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency}")
 
-        if urgency == "HIGH":
-            reply_msg = f"🚨 *EMERGENCY DETECTED*\n\nWe received your web request. We've flagged this as high priority: {summary}\n\nA plumber is being paged now!"
-        else:
-            reply_msg = f"✅ *Request Received*\n\nSummary: {summary}\n\nThis has been logged from the web form. We will contact you shortly."
+        
+        reply_msg = f" Thank you. We received your web request. A plumber is being paged now! \n \n Your request is below: \n \n > {summary}"
+
 
         # Send customer confirmation (demo no longer blocks this behavior)
         await send_whatsapp_message(
@@ -918,7 +917,6 @@ async def list_properties():
 
 
 
-
 @app.put("/api/properties/{property_id}")
 async def update_property(property_id: str, payload: PropertyUpdate):
     conn = get_db_connection()
@@ -929,6 +927,9 @@ async def update_property(property_id: str, payload: PropertyUpdate):
             if payload.title is not None:
                 updates.append("title = %s")
                 values.append(payload.title)
+            if payload.address is not None:
+                updates.append("address = %s")
+                values.append(payload.address)
             if payload.budget_range is not None:
                 updates.append("budget_range = %s")
                 values.append(payload.budget_range)
@@ -950,7 +951,7 @@ async def update_property(property_id: str, payload: PropertyUpdate):
     finally:
         conn.close()
 
-        
+
 @app.get("/api/properties/{property_id}/assets")
 async def get_property_assets(property_id: str, request: Request):
     conn = get_db_connection()
