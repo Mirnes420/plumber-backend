@@ -342,8 +342,15 @@ async def api_incident(
         print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency}")
 
         
-        reply_msg = f" Thank you. We received your web request. A plumber is being paged now! \n \n Your request is below: \n \n > {summary}"
+        lines = [
+            "Thank you. We received your web request. A plumber is being paged now!",
+            "",
+            "Your request is below:",
+            "",
+            f"> {summary.strip()}"
+        ]
 
+        reply_msg = "\n".join(lines)
 
         # Send customer confirmation (demo no longer blocks this behavior)
         await send_whatsapp_message(
