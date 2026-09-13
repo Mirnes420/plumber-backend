@@ -263,28 +263,32 @@ async def process_incoming_incident(
             # Clean up variables
             phone_number = customer_phone if customer_phone.startswith("+") else f"+{customer_phone}"
             urgency_tag = f"{urgency_emoji} *{urgency.upper()} URGENCY ALERT*"
+            if gear_str and gear_str.strip():
+                gear_items = [item.strip() for item in gear_str.split(",") if item.strip()]
+                formatted_gear = "\n".join([f"• {item}" for item in gear_items])
+            else:
+                formatted_gear = "• None specified"
 
-            full_summary = f"""━━━━━━━━━━━━━━━━━━━━━
-            {urgency_tag}
-            ━━━━━━━━━━━━━━━━━━━━━
+            lines = [
+            f"{urgency_emoji} *{urgency.upper()} URGENCY ALERT*",
+            "",
+            "> *CLIENT DETAILS*",
+            f"> *Name:* {name_text}",
+            f"> *Phone:* {phone_number}",
+            f"> *Location:* {location_text}",
+            "",
+            "📍 *ONE-TAP NAVIGATION*",
+            f"Google Maps: _{google_maps_link}_",
+            f"Apple Maps: _{apple_maps_link}_",
+            "",
+            "*JOB OVERVIEW*",
+            f"{summary}",
+            "",
+            "*RECOMMENDED GEAR*",
+            {formatted_gear}
+            ]
 
-            > *CLIENT DETAILS*
-            > *Name:* {name_text}
-            > *Phone:* {phone_number}
-            > *Location:* {location_text}
-
-            📍 *ONE-TAP NAVIGATION*
-            • *Google Maps:* {google_maps_link}
-            
-            • *Apple Maps:* {apple_maps_link}
-
-             *JOB OVERVIEW*
-             {summary}
-
-            *RECOMMENDED GEAR*
-            {gear_str}
-
-            ━━━━━━━━━━━━━━━━━━━━━"""
+            full_summary = "\n".join(lines)
 
             if target_media_url:
                 await send_whatsapp_message(

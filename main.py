@@ -343,7 +343,8 @@ async def api_incident(
 
         
         lines = [
-            "**Thank you.** We received your web request. A plumber is being paged now!",
+            "*Thank you.*",
+            "We received your web request. A plumber is being paged now!",
             "",
             "Your request is below:",
             "",
