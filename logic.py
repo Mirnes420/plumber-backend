@@ -200,6 +200,21 @@ async def process_incoming_incident(
         if not target_plumber:
             target_plumber = "385919293138" 
         print(f"ℹ️ Routing to target plumber: {target_plumber}")
+
+    # Guard: never let the plumber alert route back to the customer's own
+    # number. If plumber_override/PLUMBER_NUMBER ends up matching the
+    # customer's phone (bad plumber_id from the form, or PLUMBER_NUMBER
+    # misconfigured), treat the plumber as unrouted instead of silently
+    # sending the internal dispatch packet (client details, gear list,
+    # urgency tag) to the customer's own WhatsApp.
+    def _digits_only(n):
+        return "".join(c for c in str(n) if c.isdigit()) if n else ""
+
+    if target_plumber and _digits_only(target_plumber) == _digits_only(customer_phone):
+        print(f"⚠️ target_plumber resolved to the same number as customer_phone "
+              f"({target_plumber}) — check plumber_id / PLUMBER_WHATSAPP_NUMBER config. "
+              f"Skipping plumber notification for this incident.")
+        target_plumber = None
     
     # 1. AI Triage
     triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo, professional_type=professional_type)
@@ -290,13 +305,16 @@ async def process_incoming_incident(
 
             full_summary = "\n".join(lines)
 
-            if target_media_url:
+            if not target_plumber:
+                print("🔕 Plumber notification skipped (no valid plumber target).")
+            elif target_media_url:
                 await send_whatsapp_message(
                     to=target_plumber,
                     payload_type="image",
                     content={"link": target_media_url, "caption": full_summary},
                     sender_override=sender_override
                 )
+                notification_sent = True
             else:
                 await send_whatsapp_message(
                     to=target_plumber,
@@ -304,7 +322,7 @@ async def process_incoming_incident(
                     content={"body": full_summary},
                     sender_override=sender_override
                 )
-            notification_sent = True
+                notification_sent = True
     except Exception as e:
         print(f"Failed to notify plumber: {e}")
 

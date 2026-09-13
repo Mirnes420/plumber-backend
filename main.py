@@ -324,7 +324,7 @@ async def api_incident(
         from logic import process_incoming_incident
         
         # CHANGED: Passed location and customer_name as keyword arguments into your processing routine
-        triage_result, _ = await process_incoming_incident(
+        triage_result, notification_sent = await process_incoming_incident(
             customer_phone=phone, 
             body=description, 
             location=location,
@@ -339,12 +339,18 @@ async def api_incident(
         
         urgency = triage_result.get("urgency", "MEDIUM")
         summary = triage_result.get("summary", "")
-        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency}")
+        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Plumber notified: {notification_sent}")
 
         
+        status_line = (
+            "We received your web request. A plumber is being paged now!"
+            if notification_sent
+            else "We received your web request and logged the details. Our team will follow up shortly."
+        )
+
         lines = [
             "*Thank you.*",
-            "We received your web request. A plumber is being paged now!",
+            status_line,
             "",
             "Your request is below:",
             "",
@@ -353,7 +359,10 @@ async def api_incident(
 
         reply_msg = "\n".join(lines)
 
-        # Send customer confirmation (demo no longer blocks this behavior)
+        # Send customer confirmation ONLY — this is the sole message that
+        # goes to the customer's own number. The plumber's detailed dispatch
+        # alert (client details, gear list, nav links) is sent separately,
+        # to target_plumber, inside process_incoming_incident().
         await send_whatsapp_message(
             to=phone,
             payload_type="text",
