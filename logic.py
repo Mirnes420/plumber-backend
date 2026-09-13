@@ -184,11 +184,13 @@ async def process_incoming_incident(
     # 0. Plumber Lookup
     target_plumber = None
     if plumber_override:
+        print(f"plumber override is: {plumber_override}")
         if str(plumber_override).startswith("+") or str(plumber_override).startswith("whatsapp:"):
             target_plumber = plumber_override
         else:
             from database import get_plumber_by_id
             plumber_obj = get_plumber_by_id(plumber_override)
+            print(f"plumber override from DB is : {plumber_obj}")
             if plumber_obj:
                 target_plumber = plumber_obj.plumber_phone
                 print(f"📍 Routed to Plumber: {plumber_obj.name} ({target_plumber})")
@@ -197,8 +199,10 @@ async def process_incoming_incident(
     
     if not target_plumber:
         target_plumber = PLUMBER_NUMBER
+        print(f"plumber number from env is : {target_plumber}")
         if not target_plumber:
             target_plumber = "385919293138" 
+            print(f"plumber number from fallback is : {target_plumber}")
         print(f"ℹ️ Routing to target plumber: {target_plumber}")
 
     # Guard: never let the plumber alert route back to the customer's own
