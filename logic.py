@@ -285,7 +285,7 @@ async def process_incoming_incident(
             f"{summary}",
             "",
             "*RECOMMENDED GEAR*",
-            {formatted_gear}
+            formatted_gear
             ]
 
             full_summary = "\n".join(lines)
