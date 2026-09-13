@@ -272,7 +272,7 @@ async def process_incoming_incident(
             lines = [
             f"{urgency_emoji} *{urgency.upper()} URGENCY ALERT*",
             "",
-            "> *CLIENT DETAILS*",
+            "*CLIENT DETAILS*",
             f"> *Name:* {name_text}",
             f"> *Phone:* {phone_number}",
             f"> *Location:* {location_text}",

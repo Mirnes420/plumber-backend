@@ -295,15 +295,6 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     ollama_success = False
     parsed_json = None
     
-    if demo:
-        print("DEBUG: Demo mode active. Returning mock analysis immediately without calling AI.")
-        return {
-            "urgency": "HIGH",
-            "summary": "This is a simulated demo dispatch. No AI processing was actually performed on this message.",
-            "gear": ["Wrench", "Plumber's tape", "Safety goggles", "Demo specific tool"],
-            "ai_engine": "Mock Demo Engine"
-        }
-
     if not demo:
         for ollama_url in OLLAMA_ENDPOINTS:
             try:
@@ -351,7 +342,8 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
                 print(f"Type: {type(ollama_err).__name__}")
                 print(f"Message: {ollama_err}")
                 traceback.print_exc()
-
+    else:
+        print("DEBUG: Demo mode active. Skipping Ollama cascade and routing directly to Gemini.")
 
     if ollama_success and parsed_json:
         if image_download_task and not image_download_task.done():
