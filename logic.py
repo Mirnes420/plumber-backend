@@ -260,23 +260,31 @@ async def process_incoming_incident(
             google_maps_link = f"https://maps.google.com/?q={encoded_address}"
             apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
             
-            full_summary = (
-                "\n"
-                "\n"
-                f" *{urgency_emoji}NEW EMERGENCY ALERT* [{urgency}]\n\n"
-                f"*Customer Name:* {name_text}\n"
-                f"*Address:* {location_text}\n\n"
-                
-                f"*Navigate (Google Maps):* {google_maps_link}\n"
-                f"*Navigate (Apple Maps):* {apple_maps_link}\n\n"
+            # Clean up variables
+            phone_number = customer_phone if customer_phone.startswith("+") else f"+{customer_phone}"
+            urgency_tag = f"{urgency_emoji} *{urgency.upper()} URGENCY ALERT*"
 
-                f"*Issue:* {summary}\n\n"
-                f"*Recommended Tools/Parts:* {gear_str}\n\n"
-                
-                f"*Phone:* {customer_phone if customer_phone.startswith('+') else f'+{customer_phone}'}"
-                "\n"
-                "\n"
-            )
+            full_summary = f"""━━━━━━━━━━━━━━━━━━━━━
+            {urgency_tag}
+            ━━━━━━━━━━━━━━━━━━━━━
+
+            > *CLIENT DETAILS*
+            > *Name:* {name_text}
+            > *Phone:* {phone_number}
+            > *Location:* {location_text}
+
+            📍 *ONE-TAP NAVIGATION*
+            • *Google Maps:* {google_maps_link}
+            
+            • *Apple Maps:* {apple_maps_link}
+
+             *JOB OVERVIEW*
+             {summary}
+
+            *RECOMMENDED GEAR*
+            {gear_str}
+
+            ━━━━━━━━━━━━━━━━━━━━━"""
 
             if target_media_url:
                 await send_whatsapp_message(

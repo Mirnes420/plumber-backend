@@ -343,7 +343,7 @@ async def api_incident(
 
         
         lines = [
-            "Thank you. We received your web request. A plumber is being paged now!",
+            "**Thank you.** We received your web request. A plumber is being paged now!",
             "",
             "Your request is below:",
             "",
@@ -363,7 +363,7 @@ async def api_incident(
         if isinstance(gear_info, list):
             gear_info = ", ".join(str(x) for x in gear_info)
 
-        print("✅ Web form registration complete.")
+        print("Web form registration complete.")
         # send the structured json as a message
         return JSONResponse({
             "status": "success", 
