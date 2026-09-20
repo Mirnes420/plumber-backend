@@ -51,6 +51,7 @@ class Plumber(Base):
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
     password_hash = Column(Text, nullable=True)
+    email = Column(String(255), nullable=True)
 
 
 class WhatsAppAuth(Base):

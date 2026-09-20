@@ -298,6 +298,7 @@ async def line_webhook(request: Request):
 """
 # here we handle new incidents
 @app.post("/api/incident")
+@app.post("/api/incident")
 async def api_incident(
     phone: str = Form(...),
     description: str = Form(...),
@@ -308,7 +309,96 @@ async def api_incident(
     demo: str = Form(None),
     professional_type: str = Form(None)
 ):
+    print(f"\n=================== WEB FORM INBOUND ===================")
+    is_demo = str(demo).lower() in ("true", "1", "on", "yes")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Type: {professional_type or 'plumber'} | Demo Mode: {is_demo}")
+    
+    try:
+        image_bytes = None
+        if image and image.filename:
+            image_bytes = await image.read()
+            print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
+            
+        from logic import process_incoming_incident
+        
+        # 🔥 追加：plumber_id から業者のメールと名前を引っ張る
+        dispatcher_email = None
+        dispatcher_name = None
+        if plumber_id:
+            from database import SessionLocal, Plumber
+            db = SessionLocal()
+            try:
+                # ID で検索、なければ電話番号の末尾一致で検索
+                plumber_obj = db.query(Plumber).filter(
+                    (Plumber.id == plumber_id) | (Plumber.plumber_phone.like(f"%{plumber_id}"))
+                ).first()
+                if plumber_obj:
+                    dispatcher_email = getattr(plumber_obj, 'email', None)
+                    dispatcher_name = getattr(plumber_obj, 'name', None)
+                    print(f"DEBUG: Found plumber {dispatcher_name} | email: {dispatcher_email}")
+            finally:
+                db.close()
+        # 🔥 ここまで追加
+        
+        triage_result, notification_sent = await process_incoming_incident(
+            customer_phone=phone, 
+            body=description, 
+            location=location,
+            customer_name=customer_name,
+            media_url=None, 
+            sender_override=None,
+            plumber_override=plumber_id,
+            image_bytes=image_bytes,
+            demo=is_demo,
+            professional_type=professional_type or 'plumber',
+            dispatcher_email=dispatcher_email,      # ← ここで渡す
+            dispatcher_name=dispatcher_name         # ← 名前も渡す
+        )
+        
+        urgency = triage_result.get("urgency", "MEDIUM")
+        summary = triage_result.get("summary", "")
+        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Plumber notified: {notification_sent}")
 
+        status_line = (
+            "We received your web request. A plumber is being paged now!"
+            if notification_sent
+            else "We received your web request and logged the details. Our team will follow up shortly."
+        )
+
+        lines = [
+            "*Thank you.*",
+            status_line,
+            "",
+            "Your request is below:",
+            "",
+            f"> {summary.strip()}"
+        ]
+
+        reply_msg = "\n".join(lines)
+
+        await send_whatsapp_message(
+            to=phone,
+            payload_type="text",
+            content={"body": reply_msg}
+        )
+
+        gear_info = triage_result.get("gear", "Standard kit")
+        if isinstance(gear_info, list):
+            gear_info = ", ".join(str(x) for x in gear_info)
+
+        print("Web form registration complete.")
+        return JSONResponse({
+            "status": "success", 
+            "urgency": urgency, 
+            "summary": summary,
+            "gear": gear_info
+        })
+
+    except Exception as api_err:
+        print(f"❌ CRITICAL API_INCIDENT EXCEPTION CRASH:")
+        print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
+        sys.stdout.flush()
+        return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
     # check if demo mode is enabled
     print(f"\n=================== WEB FORM INBOUND ===================")
     # CRITICAL: Robust demo detection. Handles "true", "1", "on", boolean True, etc.
@@ -335,6 +425,7 @@ async def api_incident(
             image_bytes=image_bytes,
             demo=is_demo,
             professional_type=professional_type or 'plumber',
+            dispatcher_email=dispatcher_email
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")

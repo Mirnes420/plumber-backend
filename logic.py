@@ -5,8 +5,13 @@ from database import log_incident
 from dotenv import load_dotenv
 import urllib.parse
 from twilio.rest import Client
-import os
 from database import log_property_lead 
+import asyncio
+import smtplib
+import logging
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from typing import Optional
 
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
@@ -30,7 +35,60 @@ import httpx
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+# SMTP Configurations
+SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
+SMTP_USER = os.getenv("SMTP_USER", "your-email@gmail.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "your-app-password")
+
+
+# 1. Blocking Synchronous Worker Function
+def _send_email_sync(
+    to_email: str, 
+    subject: str, 
+    body_text: str, 
+    body_html: Optional[str] = None
+) -> bool:
+    """Executes the synchronous, blocking SMTP network call."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = f"Emergency Dispatch <{SMTP_USER}>"
+    msg["To"] = to_email
+
+    msg.attach(MIMEText(body_text, "plain"))
+    if body_html:
+        msg.attach(MIMEText(body_html, "html"))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.send_message(msg)
+        logger.info(f"Email successfully sent to {to_email}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
+
+
+# 2. Non-blocking Async Wrapper
+async def send_email_async(
+    to_email: str, 
+    subject: str, 
+    body_text: str, 
+    body_html: Optional[str] = None
+) -> bool:
+    """Offloads the synchronous SMTP function to a background thread pool."""
+    return await asyncio.to_thread(
+        _send_email_sync, 
+        to_email, 
+        subject, 
+        body_text, 
+        body_html
+    )
 
 
 
@@ -174,7 +232,9 @@ async def process_incoming_incident(
     image_bytes: bytes = None, 
     plumber_override: str = None,
     demo: bool = False,
-    professional_type: str = 'plumber'
+    professional_type: str = 'plumber',      # ← カンマ追加！
+    dispatcher_email: str = None,             # ← 追加
+    dispatcher_name: str = None              # ← 追加
 ):
     """
     Core logic to handle an incoming plumbing request.
@@ -183,6 +243,7 @@ async def process_incoming_incident(
     
     # 0. Plumber Lookup
     target_plumber = None
+    plumber_obj = None                       # ← 追加：後でメール送るときに使う
     if plumber_override:
         print(f"plumber override is: {plumber_override}")
         if str(plumber_override).startswith("+") or str(plumber_override).startswith("whatsapp:"):
@@ -205,12 +266,7 @@ async def process_incoming_incident(
             print(f"plumber number from fallback is : {target_plumber}")
         print(f"ℹ️ Routing to target plumber: {target_plumber}")
 
-    # Guard: never let the plumber alert route back to the customer's own
-    # number. If plumber_override/PLUMBER_NUMBER ends up matching the
-    # customer's phone (bad plumber_id from the form, or PLUMBER_NUMBER
-    # misconfigured), treat the plumber as unrouted instead of silently
-    # sending the internal dispatch packet (client details, gear list,
-    # urgency tag) to the customer's own WhatsApp.
+    # Guard: never let the plumber alert route back to the customer's own number
     def _digits_only(n):
         return "".join(c for c in str(n) if c.isdigit()) if n else ""
 
@@ -225,10 +281,7 @@ async def process_incoming_incident(
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
 
-    # Safety gate: if this is NOT a demo submission and we have no customer
-    # identifying info (name or location), do not dispatch or notify the
-    # plumber. This prevents operator/QA WhatsApp messages like "will it
-    # work?" from being fed to the AI and generating false alerts.
+    # Safety gate
     if not demo and (not customer_name and not location):
         print("🔕 Notification suppressed: no customer_name or location and not demo")
         return triage_result, False
@@ -236,7 +289,6 @@ async def process_incoming_incident(
     # 2. Log to Database
     ai_engine_used = triage_result.get("ai_engine", "Unknown")
     
-    # 🔥 SANITIZATION SCRUBBER: Force gear data into a clean, flat string
     gear_data = triage_result.get("gear", "Standard diagnostic kit")
     if isinstance(gear_data, list):
         gear_str = ", ".join(str(item) for item in gear_data)
@@ -253,42 +305,38 @@ async def process_incoming_incident(
         customer_name=customer_name,  
         image_url=media_url,
         ai_engine=ai_engine_used,
-        gear=gear_str  # 🔥 Pass the clean string version here
+        gear=gear_str
     )
 
     # 3. Notification to Plumber
     notification_sent = False
     try:
-            temp_url = None
-            if image_bytes and not media_url:
-                print("Encoding image to base64 for direct WhatsApp transfer...")
-                import base64
-                base64_str = base64.b64encode(image_bytes).decode('utf-8')
-                temp_url = f"data:image/jpeg;base64,{base64_str}"
-            
-            target_media_url = media_url or temp_url
+        temp_url = None
+        if image_bytes and not media_url:
+            print("Encoding image to base64 for direct WhatsApp transfer...")
+            import base64
+            base64_str = base64.b64encode(image_bytes).decode('utf-8')
+            temp_url = f"data:image/jpeg;base64,{base64_str}"
+        
+        target_media_url = media_url or temp_url
 
-            urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "🟢"
-            
-            # CHANGED: Formatted template strings to include name natively inside notifications
-            location_text = location if location else "Not provided"
-            name_text = customer_name if customer_name else "Not provided"
-            encoded_address = urllib.parse.quote_plus(location_text)
+        urgency_emoji = "🚨" if urgency == "HIGH" else "⚠️" if urgency == "MEDIUM" else "🟢"
+        
+        location_text = location if location else "Not provided"
+        name_text = customer_name if customer_name else "Not provided"
+        encoded_address = urllib.parse.quote_plus(location_text)
 
-            # 2. Construct cross-platform universal links
-            google_maps_link = f"https://maps.google.com/?q={encoded_address}"
-            apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
-            
-            # Clean up variables
-            phone_number = customer_phone if customer_phone.startswith("+") else f"+{customer_phone}"
-            urgency_tag = f"{urgency_emoji} *{urgency.upper()} URGENCY ALERT*"
-            if gear_str and gear_str.strip():
-                gear_items = [item.strip() for item in gear_str.split(",") if item.strip()]
-                formatted_gear = "\n".join([f"• {item}" for item in gear_items])
-            else:
-                formatted_gear = "• None specified"
+        google_maps_link = f"https://maps.google.com/?q={encoded_address}"
+        apple_maps_link = f"https://maps.apple.com/?q={encoded_address}"
+        
+        phone_number = customer_phone if customer_phone.startswith("+") else f"+{customer_phone}"
+        if gear_str and gear_str.strip():
+            gear_items = [item.strip() for item in gear_str.split(",") if item.strip()]
+            formatted_gear = "\n".join([f"• {item}" for item in gear_items])
+        else:
+            formatted_gear = "• None specified"
 
-            lines = [
+        lines = [
             f"{urgency_emoji} *{urgency.upper()} URGENCY ALERT*",
             "",
             "*CLIENT DETAILS*",
@@ -305,34 +353,75 @@ async def process_incoming_incident(
             "",
             "*RECOMMENDED GEAR*",
             formatted_gear
-            ]
+        ]
 
-            full_summary = "\n".join(lines)
+        full_summary = "\n".join(lines)
 
-            if not target_plumber:
-                print("🔕 Plumber notification skipped (no valid plumber target).")
-            elif target_media_url:
-                await send_whatsapp_message(
-                    to=target_plumber,
-                    payload_type="image",
-                    content={"link": target_media_url, "caption": full_summary},
-                    sender_override=sender_override
+        # ============================================
+        # 🔥 EMAIL DISPATCH（WhatsAppとは独立させる）
+        # ============================================
+        if dispatcher_email:
+            subject = f"NEW INCIDENT: {professional_type.capitalize()} Required"
+            text_content = f"""New issue reported by {customer_name or 'Customer'}.
+Details: {body}
+Location: {location or 'Unknown'}
+Urgency: {urgency}
+Gear: {gear_str}"""
+
+            html_content = f"""
+            <html>
+            <body>
+                <h2>New Incident Alert</h2>
+                <p><strong>Dear {dispatcher_name or 'Dispatcher'},</strong></p>
+                <p>You got a new incident:</p>
+                <p><strong>Customer:</strong> {customer_name or 'Unknown'} ({customer_phone})</p>
+                <p><strong>Type:</strong> {professional_type}</p>
+                <p><strong>Location:</strong> {location or 'Not provided'}</p>
+                <p><strong>Urgency:</strong> {urgency}</p>
+                <p><strong>Details:</strong> {body}</p>
+                <p><strong>Gear:</strong> {gear_str}</p>
+                <hr>
+                <p><a href="{google_maps_link}">Open in Google Maps</a></p>
+            </body>
+            </html>
+            """
+
+            # 非同期でメール送信（ブロックせえへんように create_task で投げる）
+            asyncio.create_task(
+                send_email_async(
+                    to_email=dispatcher_email,
+                    subject=subject,
+                    body_text=text_content,
+                    body_html=html_content
                 )
-                notification_sent = True
-            else:
-                await send_whatsapp_message(
-                    to=target_plumber,
-                    payload_type="text",
-                    content={"body": full_summary},
-                    sender_override=sender_override
-                )
-                notification_sent = True
+            )
+            print(f"📧 Email dispatch queued for {dispatcher_email}")
+        # ============================================
+
+        # --- WHATSAPP DISPATCH ---
+        if not target_plumber:
+            print("🔕 Plumber WhatsApp notification skipped (no valid plumber target).")
+        elif target_media_url:
+            await send_whatsapp_message(
+                to=target_plumber,
+                payload_type="image",
+                content={"link": target_media_url, "caption": full_summary},
+                sender_override=sender_override
+            )
+            notification_sent = True
+        else:
+            await send_whatsapp_message(
+                to=target_plumber,
+                payload_type="text",
+                content={"body": full_summary},
+                sender_override=sender_override
+            )
+            notification_sent = True
+            
     except Exception as e:
         print(f"Failed to notify plumber: {e}")
 
     return triage_result, notification_sent
-
-
 
 # --- PROPERTY LEAD DISPATCH LOGIC ---
 
