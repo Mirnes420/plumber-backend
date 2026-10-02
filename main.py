@@ -325,7 +325,7 @@ async def api_incident(
         dispatcher_email = None
         dispatcher_name = None
         if plumber_id:
-            from database import SessionLocal, Plumber
+            from database import SessionLocal, Contractor
             db = SessionLocal()
             try:
                 # ID で検索、なければ電話番号の末尾一致で検索
@@ -586,7 +586,7 @@ async def admin_set_password(body: AdminSetPasswordRequest):
     clean = _clean_phone(body.phone)
     print(f"admin set-password: raw='{body.phone}' clean='{clean}'")
 
-    from database import SessionLocal, Plumber
+    from database import SessionLocal, Contractor
     db = SessionLocal()
     try:
         # Match by checking if the stored number ends with the cleaned input
@@ -635,7 +635,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
 
     # Plumber login
     clean = _clean_phone(body.phone)
-    from database import SessionLocal, Plumber
+    from database import SessionLocal, Contractor
     db = SessionLocal()
     try:
         plumber = db.query(Plumber).filter(Plumber.plumber_phone.like(f"%{clean}")).first()
@@ -669,7 +669,7 @@ async def admin_me(request: Request):
 @app.get("/admin/plumbers")
 async def admin_list_plumbers(request: Request):
     """Debug: list all registered plumbers and whether they have a password set."""
-    from database import SessionLocal, Plumber
+    from database import SessionLocal, Contractor
     db = SessionLocal()
     try:
         plumbers = db.query(Plumber).order_by(Plumber.id).all()
