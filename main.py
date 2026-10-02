@@ -329,7 +329,7 @@ async def api_incident(
             try:
                 # ID で検索、なければ電話番号の末尾一致で検索
                 plumber_obj = db.query(Contractor).filter(
-                    (Contractor.id == plumber_id) | (Contractor.plumber_phone.like(f"%{plumber_id}"))
+                    (Contractor.id == plumber_id) | (Contractor.contractor_phone.like(f"%{plumber_id}"))
                 ).first()
                 if plumber_obj:
                     dispatcher_email = getattr(plumber_obj, 'email', None)
@@ -589,11 +589,11 @@ async def admin_set_password(body: AdminSetPasswordRequest):
     db = SessionLocal()
     try:
         # Match by checking if the stored number ends with the cleaned input
-        contractor = db.query(Contractor).filter(Contractor.plumber_phone.like(f"%{clean}")).first()
+        contractor = db.query(Contractor).filter(Contractor.contractor_phone.like(f"%{clean}")).first()
         if not contractor:
             # Show registered phones in error so user knows what to type
             all_plumbers = db.query(Contractor).all()
-            phones = ", ".join(f"{p.name}: {p.plumber_phone}" for p in all_plumbers) or "none"
+            phones = ", ".join(f"{p.name}: {p.contractor_phone}" for p in all_plumbers) or "none"
             raise HTTPException(
                 status_code=404,
                 detail=f"Phone '{clean}' not found. Registered phones: {phones}"
@@ -637,7 +637,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
     from database import SessionLocal, Contractor
     db = SessionLocal()
     try:
-        contractor = db.query(Contractor).filter(Contractor.plumber_phone.like(f"%{clean}")).first()
+        contractor = db.query(Contractor).filter(Contractor.contractor_phone.like(f"%{clean}")).first()
         if not contractor:
             raise HTTPException(status_code=401, detail="Phone not found. Use 'admin' for master access.")
         if not contractor.password_hash:
@@ -645,7 +645,7 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         # 🔐 Verify with argon2
         if not pqc_verify_password(body.password, contractor.password_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
-        token = _issue_admin_token({"id": contractor.id, "name": contractor.name, "phone": contractor.plumber_phone, "isMaster": False})
+        token = _issue_admin_token({"id": contractor.id, "name": contractor.name, "phone": contractor.contractor_phone, "isMaster": False})
         response = JSONResponse({"success": True, "name": contractor.name})
         response.set_cookie(
             key="admin_token",
@@ -676,7 +676,7 @@ async def admin_list_plumbers(request: Request):
             {
                 "id": p.id,
                 "name": p.name,
-                "plumber_phone": p.plumber_phone,
+                "contractor_phone": p.contractor_phone,
                 "active": p.active,
                 "has_password": bool(p.password_hash)
             } for p in plumbers
@@ -694,7 +694,7 @@ async def admin_incidents(request: Request,
     """Return incidents filtered by contractor or all (master admin)."""
     user = await _get_current_admin(request)
     is_master = user.get("isMaster", False)
-    plumber_phone = user.get("phone")
+    contractor_phone = user.get("phone")
 
     from database import SessionLocal, Incident
     from sqlalchemy import and_
@@ -702,7 +702,7 @@ async def admin_incidents(request: Request,
     try:
         q = db.query(Incident)
         if not is_master:
-            q = q.filter(Incident.plumber_phone == plumber_phone)
+            q = q.filter(Incident.contractor_phone == contractor_phone)
         if urgency and urgency != "ALL":
             q = q.filter(Incident.urgency == urgency)
         if status and status != "ALL":
@@ -716,7 +716,7 @@ async def admin_incidents(request: Request,
             {
                 "id": i.id,
                 "customer_phone": i.customer_phone,
-                "plumber_phone": i.plumber_phone,
+                "contractor_phone": i.contractor_phone,
                 "urgency": i.urgency,
                 "summary": i.summary,
                 "raw_message": i.raw_message,

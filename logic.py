@@ -251,7 +251,7 @@ async def process_incoming_incident(
             contractor_obj = get_contractor_by_id(contractor_override)
             print(f"contractor override from DB is : {contractor_obj}")
             if contractor_obj:
-                target_contractor = contractor_obj.plumber_phone
+                target_contractor = contractor_obj.contractor_phone
                 print(f"📍 Routed to Contractor: {contractor_obj.name} ({target_contractor})")
             else:
                 print(f"⚠️ Contractor ID '{contractor_override}' not found in DB.")
@@ -299,7 +299,7 @@ async def process_incoming_incident(
 
     log_incident(
         customer_phone=customer_phone,
-        plumber_phone=target_contractor,
+        contractor_phone=target_contractor,
         urgency=urgency,
         summary=summary,
         raw_message=body,

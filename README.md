@@ -36,7 +36,7 @@ Run the following SQL in your Supabase SQL Editor to create the `incidents` tabl
 CREATE TABLE incidents (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     customer_phone TEXT,
-    plumber_phone TEXT,
+    contractor_phone TEXT,
     urgency TEXT, -- 'HIGH', 'MEDIUM', 'LOW'
     summary TEXT,
     raw_message TEXT,

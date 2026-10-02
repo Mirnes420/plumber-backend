@@ -27,7 +27,7 @@ class Incident(Base):
 
     id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
     customer_phone = Column(String)
-    plumber_phone = Column(String)
+    contractor_phone = Column(String)
     urgency = Column(String)
     summary = Column(Text)
     raw_message = Column(Text)
@@ -47,7 +47,7 @@ class Contractor(Base):
 
     id = Column(String, primary_key=True)
     name = Column(String)
-    plumber_phone = Column(String)
+    contractor_phone = Column(String)
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
     password_hash = Column(Text, nullable=True)
@@ -167,7 +167,7 @@ finally:
 
 def log_incident(
     customer_phone: str,
-    plumber_phone: str,
+    contractor_phone: str,
     urgency: str,
     summary: str,
     raw_message: str,
