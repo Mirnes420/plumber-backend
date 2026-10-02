@@ -167,7 +167,7 @@ finally:
 
 def log_incident(
     customer_phone: str,
-    contractor_phone: str,
+    plumber_phone: str,
     urgency: str,
     summary: str,
     raw_message: str,
