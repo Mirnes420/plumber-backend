@@ -298,7 +298,6 @@ async def line_webhook(request: Request):
 """
 # here we handle new incidents
 @app.post("/api/incident")
-@app.post("/api/incident")
 async def api_incident(
     phone: str = Form(...),
     description: str = Form(...),
@@ -347,7 +346,7 @@ async def api_incident(
             customer_name=customer_name,
             media_url=None, 
             sender_override=None,
-            plumber_override=plumber_id,
+            contractor_override=plumber_id,
             image_bytes=image_bytes,
             demo=is_demo,
             professional_type=professional_type or 'contractor',
