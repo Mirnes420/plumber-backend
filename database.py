@@ -42,8 +42,8 @@ class Incident(Base):
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class Plumber(Base):
-    __tablename__ = "plumbers"
+class Contractor(Base):
+    __tablename__ = "contractors"
 
     id = Column(String, primary_key=True)
     name = Column(String)
@@ -52,6 +52,7 @@ class Plumber(Base):
     active = Column(Boolean, default=True)
     password_hash = Column(Text, nullable=True)
     email = Column(String(255), nullable=True)
+    language = Column(String, default="English")
 
 
 class WhatsAppAuth(Base):
@@ -148,16 +149,16 @@ Base.metadata.create_all(bind=engine)
 
 db_seed = SessionLocal()
 try:
-    if db_seed.query(Plumber).count() == 0:
+    if db_seed.query(Contractor).count() == 0:
         print("🌱 Seeding default plumbers...")
-        p1 = Plumber(id="1", name="Mario Mario", plumber_phone="385919293138", dispatcher_phone="", active=True)
-        p2 = Plumber(id="2", name="Luigi Mario", plumber_phone="38767103917", dispatcher_phone="", active=True)
+        p1 = Contractor(id="1", name="Mario Mario", phone="385919293138", dispatcher_phone="", active=True)
+        p2 = Contractor(id="2", name="Luigi Mario", phone="38767103917", dispatcher_phone="", active=True)
         db_seed.add(p1)
         db_seed.add(p2)
         db_seed.commit()
-        print("✅ Default plumbers seeded successfully.")
+        print("✅ Default contractors seeded successfully.")
 except Exception as seed_err:
-    print(f"Failed to seed plumbers: {seed_err}")
+    print(f"Failed to seed contractors: {seed_err}")
 finally:
     db_seed.close()
 
