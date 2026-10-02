@@ -230,14 +230,13 @@ async def query_ollama_stream(url: str, payload: dict) -> str:
 # ==============================================================================
 # 5. CORE TRIAGE ENGINE WITH EXPONENTIAL BACKOFF RETRY CIRCUITS
 # ==============================================================================
-async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None, demo: bool = False, professional_type: str = 'plumber'):
+
 async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None, demo: bool = False, professional_type: str = 'plumber', language: str = 'English'):
     """
     Orchestrates automated incoming tickets. Attempts rapid classification via
     local models, falling back to a cloud-based Gemini cluster wrapped with 
     asynchronous exponential backoff mechanics.
     """
-    print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...' | professional_type: {professional_type} | demo mode: {demo}")
     print(f"DEBUG: Starting triage analysis for text: '{text[:50]}...' | professional_type: {professional_type} | language: {language} | demo mode: {demo}")
     print("Starting the timer")
     timer_start = time.time()
