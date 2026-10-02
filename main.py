@@ -19,7 +19,7 @@ from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPExcep
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from dotenv import load_dotenv
-#from logic import send_whatsapp_message, process_incoming_property_message, build_property_pdf
+from logic import send_whatsapp_message, process_incoming_incident
 import jwt as pyjwt
 import asyncio
 from datetime import datetime, timedelta, timezone
