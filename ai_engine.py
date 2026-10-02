@@ -49,7 +49,7 @@ MODEL_TIERS = [
 # 3. DOMAIN-SPECIFIC EXPERT PROMPTS
 # ==============================================================================
 SYSTEM_PROMPTS = {
-    "plumber": """You are an emergency plumbing dispatcher. Analyze the customer's plumbing issue.
+    "contractor": """You are an emergency plumbing dispatcher. Analyze the customer's plumbing issue.
 
 URGENCY CRITERIA:
 - HIGH: Burst pipes, active flooding, sewage backup into living areas, no water supply to the building, or water heater failure causing scalding/flooding risk.
@@ -137,7 +137,7 @@ JSON OUTPUT ONLY. Return exactly this structure:
 }"""
 
 # Legacy backward-compatibility mapping
-SYSTEM_PROMPT = SYSTEM_PROMPTS["plumber"]
+SYSTEM_PROMPT = SYSTEM_PROMPTS["contractor"]
 
 
 # ==============================================================================
@@ -272,7 +272,7 @@ async def query_ollama_stream(url: str, payload: dict) -> str:
 # ==============================================================================
 # 5. CORE TRIAGE ENGINE WITH EXPONENTIAL BACKOFF RETRY CIRCUITS
 # ==============================================================================
-async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None, demo: bool = False, professional_type: str = 'plumber', language: str = 'English'):
+async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = None, demo: bool = False, professional_type: str = 'contractor', language: str = 'English'):
     """
     Orchestrates automated incoming tickets. Attempts rapid classification via
     local models, falling back to a cloud-based Gemini cluster wrapped with 
@@ -282,7 +282,7 @@ async def analyze_triage(text: str, image_url: str = None, image_bytes: bytes = 
     print("Starting the timer")
     timer_start = time.time()
     
-    system_prompt = SYSTEM_PROMPTS.get(professional_type, SYSTEM_PROMPTS["plumber"])
+    system_prompt = SYSTEM_PROMPTS.get(professional_type, SYSTEM_PROMPTS["contractor"])
     system_prompt += f"\n\nIMPORTANT: Generate the 'summary' and 'gear' fields strictly in {language}."
     print(f"DEBUG: Using system prompt for professional type: '{professional_type}'")
     

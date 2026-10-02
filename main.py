@@ -311,7 +311,7 @@ async def api_incident(
 ):
     print(f"\n=================== WEB FORM INBOUND ===================")
     is_demo = str(demo).lower() in ("true", "1", "on", "yes")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Type: {professional_type or 'plumber'} | Demo Mode: {is_demo}")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Contractor: {plumber_id} | Type: {professional_type or 'contractor'} | Demo Mode: {is_demo}")
     
     try:
         image_bytes = None
@@ -329,13 +329,13 @@ async def api_incident(
             db = SessionLocal()
             try:
                 # ID で検索、なければ電話番号の末尾一致で検索
-                plumber_obj = db.query(Plumber).filter(
-                    (Plumber.id == plumber_id) | (Plumber.plumber_phone.like(f"%{plumber_id}"))
+                plumber_obj = db.query(Contractor).filter(
+                    (Contractor.id == plumber_id) | (Contractor.plumber_phone.like(f"%{plumber_id}"))
                 ).first()
                 if plumber_obj:
                     dispatcher_email = getattr(plumber_obj, 'email', None)
                     dispatcher_name = getattr(plumber_obj, 'name', None)
-                    print(f"DEBUG: Found plumber {dispatcher_name} | email: {dispatcher_email}")
+                    print(f"DEBUG: Found contractor {dispatcher_name} | email: {dispatcher_email}")
             finally:
                 db.close()
         # 🔥 ここまで追加
@@ -350,17 +350,17 @@ async def api_incident(
             plumber_override=plumber_id,
             image_bytes=image_bytes,
             demo=is_demo,
-            professional_type=professional_type or 'plumber',
+            professional_type=professional_type or 'contractor',
             dispatcher_email=dispatcher_email,      # ← ここで渡す
             dispatcher_name=dispatcher_name         # ← 名前も渡す
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")
         summary = triage_result.get("summary", "")
-        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Plumber notified: {notification_sent}")
+        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
 
         status_line = (
-            "We received your web request. A plumber is being paged now!"
+            "We received your web request. A contractor is being paged now!"
             if notification_sent
             else "We received your web request and logged the details. Our team will follow up shortly."
         )
@@ -403,7 +403,7 @@ async def api_incident(
     print(f"\n=================== WEB FORM INBOUND ===================")
     # CRITICAL: Robust demo detection. Handles "true", "1", "on", boolean True, etc.
     is_demo = str(demo).lower() in ("true", "1", "on", "yes")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Plumber: {plumber_id} | Type: {professional_type or 'plumber'} | Demo Mode: {is_demo}")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Contractor: {plumber_id} | Type: {professional_type or 'contractor'} | Demo Mode: {is_demo}")
     
     try:
         image_bytes = None
@@ -424,17 +424,17 @@ async def api_incident(
             plumber_override=plumber_id,
             image_bytes=image_bytes,
             demo=is_demo,
-            professional_type=professional_type or 'plumber',
+            professional_type=professional_type or 'contractor',
             dispatcher_email=dispatcher_email
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")
         summary = triage_result.get("summary", "")
-        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Plumber notified: {notification_sent}")
+        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
 
         
         status_line = (
-            "We received your web request. A plumber is being paged now!"
+            "We received your web request. A contractor is being paged now!"
             if notification_sent
             else "We received your web request and logged the details. Our team will follow up shortly."
         )
@@ -451,7 +451,7 @@ async def api_incident(
         reply_msg = "\n".join(lines)
 
         # Send customer confirmation ONLY — this is the sole message that
-        # goes to the customer's own number. The plumber's detailed dispatch
+        # goes to the customer's own number. The contractor's detailed dispatch
         # alert (client details, gear list, nav links) is sent separately,
         # to target_plumber, inside process_incoming_incident().
         await send_whatsapp_message(
@@ -578,7 +578,7 @@ async def _get_current_admin(request: Request) -> dict:
 @app.post("/admin/set-password")
 async def admin_set_password(body: AdminSetPasswordRequest):
     print('setting the password')
-    """Set or update password for an existing plumber using their registered phone."""
+    """Set or update password for an existing contractor using their registered phone."""
     if not body.password or len(body.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
     
@@ -590,10 +590,10 @@ async def admin_set_password(body: AdminSetPasswordRequest):
     db = SessionLocal()
     try:
         # Match by checking if the stored number ends with the cleaned input
-        plumber = db.query(Plumber).filter(Plumber.plumber_phone.like(f"%{clean}")).first()
-        if not plumber:
+        contractor = db.query(Contractor).filter(Contractor.plumber_phone.like(f"%{clean}")).first()
+        if not contractor:
             # Show registered phones in error so user knows what to type
-            all_plumbers = db.query(Plumber).all()
+            all_plumbers = db.query(Contractor).all()
             phones = ", ".join(f"{p.name}: {p.plumber_phone}" for p in all_plumbers) or "none"
             raise HTTPException(
                 status_code=404,
@@ -601,10 +601,10 @@ async def admin_set_password(body: AdminSetPasswordRequest):
             )
         # 🔐 Hash with argon2
         hashed = pqc_hash_password(body.password)
-        plumber.password_hash = hashed
+        contractor.password_hash = hashed
         db.commit()
-        print(f"admin set-password success for {plumber.name} ({clean})")
-        return {"success": True, "name": plumber.name}
+        print(f"admin set-password success for {contractor.name} ({clean})")
+        return {"success": True, "name": contractor.name}
     finally:
         db.close()
 
@@ -633,21 +633,21 @@ async def admin_login(body: AdminLoginRequest, request: Request):
         )
         return response
 
-    # Plumber login
+    # Contractor login
     clean = _clean_phone(body.phone)
     from database import SessionLocal, Contractor
     db = SessionLocal()
     try:
-        plumber = db.query(Plumber).filter(Plumber.plumber_phone.like(f"%{clean}")).first()
-        if not plumber:
+        contractor = db.query(Contractor).filter(Contractor.plumber_phone.like(f"%{clean}")).first()
+        if not contractor:
             raise HTTPException(status_code=401, detail="Phone not found. Use 'admin' for master access.")
-        if not plumber.password_hash:
+        if not contractor.password_hash:
             raise HTTPException(status_code=401, detail="No password set. Use the Set Password option first.", headers={"X-Needs-Password": "true"})
         # 🔐 Verify with argon2
-        if not pqc_verify_password(body.password, plumber.password_hash):
+        if not pqc_verify_password(body.password, contractor.password_hash):
             raise HTTPException(status_code=401, detail="Invalid credentials.")
-        token = _issue_admin_token({"id": plumber.id, "name": plumber.name, "phone": plumber.plumber_phone, "isMaster": False})
-        response = JSONResponse({"success": True, "name": plumber.name})
+        token = _issue_admin_token({"id": contractor.id, "name": contractor.name, "phone": contractor.plumber_phone, "isMaster": False})
+        response = JSONResponse({"success": True, "name": contractor.name})
         response.set_cookie(
             key="admin_token",
             value=token,
@@ -672,7 +672,7 @@ async def admin_list_plumbers(request: Request):
     from database import SessionLocal, Contractor
     db = SessionLocal()
     try:
-        plumbers = db.query(Plumber).order_by(Plumber.id).all()
+        plumbers = db.query(Contractor).order_by(Contractor.id).all()
         return {"plumbers": [
             {
                 "id": p.id,
@@ -692,7 +692,7 @@ async def admin_incidents(request: Request,
                           status: str = None,
                           from_date: str = None,
                           to_date: str = None):
-    """Return incidents filtered by plumber or all (master admin)."""
+    """Return incidents filtered by contractor or all (master admin)."""
     user = await _get_current_admin(request)
     is_master = user.get("isMaster", False)
     plumber_phone = user.get("phone")

@@ -27,7 +27,7 @@ class Incident(Base):
 
     id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
     customer_phone = Column(String)
-    plumber_phone = Column(String)
+    contractor_phone = Column(String)
     urgency = Column(String)
     summary = Column(Text)
     raw_message = Column(Text)
@@ -47,7 +47,7 @@ class Contractor(Base):
 
     id = Column(String, primary_key=True)
     name = Column(String)
-    plumber_phone = Column(String)
+    contractor_phone = Column(String)
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
     password_hash = Column(Text, nullable=True)
@@ -145,14 +145,14 @@ class Lead(Base):
 Base.metadata.create_all(bind=engine)
 
 
-# --- SEED DEFAULT PLUMBERS ---
+# --- SEED DEFAULT CONTRACTORS ---
 
 db_seed = SessionLocal()
 try:
     if db_seed.query(Contractor).count() == 0:
-        print("🌱 Seeding default plumbers...")
-        p1 = Contractor(id="1", name="Mario Mario", phone="385919293138", dispatcher_phone="", active=True)
-        p2 = Contractor(id="2", name="Luigi Mario", phone="38767103917", dispatcher_phone="", active=True)
+        print("🌱 Seeding default contractors...")
+        p1 = Contractor(id="1", name="Mario Mario", contractor_phone="385919293138", dispatcher_phone="", active=True)
+        p2 = Contractor(id="2", name="Luigi Mario", contractor_phone="38767103917", dispatcher_phone="", active=True)
         db_seed.add(p1)
         db_seed.add(p2)
         db_seed.commit()
@@ -167,7 +167,7 @@ finally:
 
 def log_incident(
     customer_phone: str,
-    plumber_phone: str,
+    contractor_phone: str,
     urgency: str,
     summary: str,
     raw_message: str,
@@ -182,7 +182,7 @@ def log_incident(
     try:
         new_incident = Incident(
             customer_phone=customer_phone,
-            plumber_phone=plumber_phone,
+            contractor_phone=contractor_phone,
             urgency=urgency,
             summary=summary,
             raw_message=raw_message,
@@ -213,7 +213,7 @@ def get_incidents():
             {
                 "id": i.id,
                 "customer_phone": i.customer_phone,
-                "plumber_phone": i.plumber_phone,
+                "contractor_phone": i.contractor_phone,
                 "urgency": i.urgency,
                 "summary": i.summary,
                 "raw_message": i.raw_message,
@@ -251,15 +251,15 @@ def update_incident_status(incident_id: str, status: str):
         db.close()
 
 
-def get_plumber_by_id(plumber_id: str):
-    """Fetches plumber details from DB by ID."""
-    if not plumber_id:
+def get_contractor_by_id(contractor_id: str):
+    """Fetches contractor details from DB by ID."""
+    if not contractor_id:
         return None
     db = SessionLocal()
     try:
-        return db.query(Plumber).filter(Plumber.id == str(plumber_id), Plumber.active == True).first()
+        return db.query(Contractor).filter(Contractor.id == str(contractor_id), Contractor.active == True).first()
     except Exception as e:
-        print(f"Error fetching plumber {plumber_id}: {e}")
+        print(f"Error fetching contractor {contractor_id}: {e}")
         return None
     finally:
         db.close()

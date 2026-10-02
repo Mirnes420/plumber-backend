@@ -33,7 +33,7 @@ import httpx
 
 # WBOT Config
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
-PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER", "").strip()
+CONTRACTOR_NUMBER = os.getenv("CONTRACTOR_WHATSAPP_NUMBER", "").strip()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -99,8 +99,8 @@ def clean_whatsapp_number(number: str) -> str:
     return number
 
 
-# twillio implementation for sending messages to plumbers (for later)
-def send_dispatch_alert(target_plumber, full_summary, static_map_url=None):
+# twillio implementation for sending messages to contractors (for later)
+def send_dispatch_alert(target_contractor, full_summary, static_map_url=None):
 
     client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
 
@@ -108,7 +108,7 @@ def send_dispatch_alert(target_plumber, full_summary, static_map_url=None):
     try:
         message = client.messages.create(
             from_=f"whatsapp:{os.getenv('TWILIO_WHATSAPP_NUMBER')}",
-            to=f"whatsapp:{target_plumber}",
+            to=f"whatsapp:{target_contractor}",
             body=full_summary,
             media_url=[static_map_url] if static_map_url else None
         )
@@ -121,7 +121,7 @@ def send_dispatch_alert(target_plumber, full_summary, static_map_url=None):
         try:
             message = client.messages.create(
                 from_=os.getenv("TWILIO_SMS_NUMBER"),  # plain E.164 number, no 'whatsapp:' prefix
-                to=target_plumber,
+                to=target_contractor,
                 body=full_summary,
                 media_url=[static_map_url] if static_map_url else None
             )
@@ -228,9 +228,9 @@ async def process_incoming_incident(
     media_url: str = None, 
     sender_override: str = None, 
     image_bytes: bytes = None, 
-    plumber_override: str = None,
+    contractor_override: str = None,
     demo: bool = False,
-    professional_type: str = 'plumber',      # ← カンマ追加！
+    professional_type: str = 'contractor',      # ← カンマ追加！
     dispatcher_email: str = None,             # ← 追加
     dispatcher_name: str = None              # ← 追加
 ):
@@ -239,47 +239,47 @@ async def process_incoming_incident(
     """
     print(f"Processing incident from {customer_name or 'Unknown'} ({customer_phone}) | Demo Mode: {demo}")
     
-    # 0. Plumber Lookup
-    target_plumber = None
-    plumber_obj = None                       # ← 追加：後でメール送るときに使う
-    if plumber_override:
-        print(f"plumber override is: {plumber_override}")
-        if str(plumber_override).startswith("+") or str(plumber_override).startswith("whatsapp:"):
-            target_plumber = plumber_override
+    # 0. Contractor Lookup
+    target_contractor = None
+    contractor_obj = None                       # ← 追加：後でメール送るときに使う
+    if contractor_override:
+        print(f"contractor override is: {contractor_override}")
+        if str(contractor_override).startswith("+") or str(contractor_override).startswith("whatsapp:"):
+            target_contractor = contractor_override
         else:
-            from database import get_plumber_by_id
-            plumber_obj = get_plumber_by_id(plumber_override)
-            print(f"plumber override from DB is : {plumber_obj}")
-            if plumber_obj:
-                target_plumber = plumber_obj.plumber_phone
-                print(f"📍 Routed to Plumber: {plumber_obj.name} ({target_plumber})")
+            from database import get_contractor_by_id
+            contractor_obj = get_contractor_by_id(contractor_override)
+            print(f"contractor override from DB is : {contractor_obj}")
+            if contractor_obj:
+                target_contractor = contractor_obj.contractor_phone
+                print(f"📍 Routed to Contractor: {contractor_obj.name} ({target_contractor})")
             else:
-                print(f"⚠️ Plumber ID '{plumber_override}' not found in DB.")
+                print(f"⚠️ Contractor ID '{contractor_override}' not found in DB.")
     
-    if not target_plumber:
-        target_plumber = PLUMBER_NUMBER
-        print(f"plumber number from env is : {target_plumber}")
-        if not target_plumber:
-            target_plumber = "385919293138" 
-            print(f"plumber number from fallback is : {target_plumber}")
-        print(f"ℹ️ Routing to target plumber: {target_plumber}")
+    if not target_contractor:
+        target_contractor = CONTRACTOR_NUMBER
+        print(f"contractor number from env is : {target_contractor}")
+        if not target_contractor:
+            target_contractor = "385919293138" 
+            print(f"contractor number from fallback is : {target_contractor}")
+        print(f"ℹ️ Routing to target contractor: {target_contractor}")
 
-    # Guard: never let the plumber alert route back to the customer's own number
+    # Guard: never let the contractor alert route back to the customer's own number
     def _digits_only(n):
         return "".join(c for c in str(n) if c.isdigit()) if n else ""
 
-    if target_plumber and _digits_only(target_plumber) == _digits_only(customer_phone):
-        print(f"⚠️ target_plumber resolved to the same number as customer_phone "
-              f"({target_plumber}) — check plumber_id / PLUMBER_WHATSAPP_NUMBER config. "
-              f"Skipping plumber notification for this incident.")
-        target_plumber = None
+    if target_contractor and _digits_only(target_contractor) == _digits_only(customer_phone):
+        print(f"⚠️ target_contractor resolved to the same number as customer_phone "
+              f"({target_contractor}) — check contractor_id / CONTRACTOR_WHATSAPP_NUMBER config. "
+              f"Skipping contractor notification for this incident.")
+        target_contractor = None
     
-    plumber_language = "English"
-    if plumber_obj and hasattr(plumber_obj, 'language') and plumber_obj.language:
-        plumber_language = plumber_obj.language
+    contractor_language = "English"
+    if contractor_obj and hasattr(contractor_obj, 'language') and contractor_obj.language:
+        contractor_language = contractor_obj.language
 
     # 1. AI Triage
-    triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo, professional_type=professional_type, language=plumber_language)
+    triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo, professional_type=professional_type, language=contractor_language)
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
 
@@ -299,7 +299,7 @@ async def process_incoming_incident(
 
     log_incident(
         customer_phone=customer_phone,
-        plumber_phone=target_plumber,
+        contractor_phone=target_contractor,
         urgency=urgency,
         summary=summary,
         raw_message=body,
@@ -310,7 +310,7 @@ async def process_incoming_incident(
         gear=gear_str
     )
 
-    # 3. Notification to Plumber
+    # 3. Notification to Contractor
     notification_sent = False
     try:
         temp_url = None
@@ -401,11 +401,11 @@ Gear: {gear_str}"""
         # ============================================
 
         # --- WHATSAPP DISPATCH ---
-        if not target_plumber:
-            print("🔕 Plumber WhatsApp notification skipped (no valid plumber target).")
+        if not target_contractor:
+            print("🔕 Contractor WhatsApp notification skipped (no valid contractor target).")
         elif target_media_url:
             await send_whatsapp_message(
-                to=target_plumber,
+                to=target_contractor,
                 payload_type="image",
                 content={"link": target_media_url, "caption": full_summary},
                 sender_override=sender_override
@@ -413,7 +413,7 @@ Gear: {gear_str}"""
             notification_sent = True
         else:
             await send_whatsapp_message(
-                to=target_plumber,
+                to=target_contractor,
                 payload_type="text",
                 content={"body": full_summary},
                 sender_override=sender_override
@@ -421,6 +421,6 @@ Gear: {gear_str}"""
             notification_sent = True
             
     except Exception as e:
-        print(f"Failed to notify plumber: {e}")
+        print(f"Failed to notify contractor: {e}")
 
     return triage_result, notification_sent
