@@ -12,6 +12,9 @@ import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
+import yagmail
+
+
 
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
@@ -43,30 +46,24 @@ SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_USER = os.getenv("SMTP_USER", "your-email@gmail.com")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "your-app-password")
-
-
-# 1. Blocking Synchronous Worker Function
+yag = yagmail.SMTP(SMTP_USER, SMTP_PASSWORD)
 def _send_email_sync(
     to_email: str, 
     subject: str, 
     body_text: str, 
     body_html: Optional[str] = None
 ) -> bool:
-    """Executes the synchronous, blocking SMTP network call."""
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = f"Emergency Dispatch <{SMTP_USER}>"
-    msg["To"] = to_email
-
-    msg.attach(MIMEText(body_text, "plain"))
-    if body_html:
-        msg.attach(MIMEText(body_html, "html"))
+    """Executes the synchronous yagmail network call."""
+    # Yagmail accepts text or HTML directly in the contents list.
+    # If body_html is provided, pass it; otherwise fallback to body_text.
+    contents = [body_html] if body_html else [body_text]
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.send_message(msg)
+        yag.send(
+            to=to_email,
+            subject=subject,
+            contents=contents
+        )
         logger.info(f"Email successfully sent to {to_email}")
         return True
     except Exception as e:
@@ -81,7 +78,7 @@ async def send_email_async(
     body_text: str, 
     body_html: Optional[str] = None
 ) -> bool:
-    """Offloads the synchronous SMTP function to a background thread pool."""
+    """Offloads the synchronous yagmail function to a background thread pool."""
     return await asyncio.to_thread(
         _send_email_sync, 
         to_email, 
@@ -89,6 +86,8 @@ async def send_email_async(
         body_text, 
         body_html
     )
+
+
 
 def clean_whatsapp_number(number: str) -> str:
     if not number:
