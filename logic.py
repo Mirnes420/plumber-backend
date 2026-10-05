@@ -374,6 +374,8 @@ async def process_incoming_incident(
                 Urgency: {urgency}
                 Gear: {gear_str}"""
 
+
+            header_logo_url = f"./coherzo-dark.png"
             
 
             html_content = f"""
@@ -390,12 +392,21 @@ async def process_incoming_incident(
                 <td align="center">
                     <table role="presentation" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
                         
-                        <!-- Header -->
+                        <!-- Header with coherzo-dark.png inverted to white -->
                         <tr>
-                            <td style="background-color: #0F172A; padding: 24px; text-align: left;">
-                                <h1 style="color: #FFFFFF; margin: 0; font-size: 20px; font-weight: 600; tracking: -0.5px;">
-                                    Emergency Dispatch System
-                                </h1>
+                            <td style="background-color: #0F172A; padding: 20px 24px;">
+                                <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                    <tr>
+                                        <td style="vertical-align: middle;">
+                                            <img src="{header_logo_url}" alt="Coherzo" style="height: 32px; width: auto; display: block; -webkit-filter: brightness(0) invert(1); filter: brightness(0) invert(1);" />
+                                        </td>
+                                        <td style="vertical-align: middle; text-align: right;">
+                                            <span style="color: #94A3B8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">
+                                                Emergency Dispatch
+                                            </span>
+                                        </td>
+                                    </tr>
+                                </table>
                             </td>
                         </tr>
 
@@ -411,21 +422,25 @@ async def process_incoming_incident(
                             </td>
                         </tr>
 
+                        <!-- Conditional Incident Image -->
+                        {image_block}
+
                         <!-- Footer -->
                         <tr>
-                            <td style="background-color: #F1F5F9; padding: 16px 24px; border-top: 1px solid #E2E8F0; text-align: center;">
-                                <p style="margin: 0; font-size: 12px; color: #64748B;">
+                            <td style="background-color: #F1F5F9; padding: 24px; border-top: 1px solid #E2E8F0; text-align: center;">
+                                <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.5;">
                                     Automated Alert System • Do not reply directly to this email
                                 </p>
                             </td>
-                            </tr>
+                        </tr>
+
                     </table>
                 </td>
             </tr>
         </table>
     </body>
     </html>
-            """
+    """
 
             # 非同期でメール送信（ブロックせえへんように create_task で投げる）
             asyncio.create_task(
