@@ -12,7 +12,7 @@ import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
-import yagmail
+import resend
 
 
 
@@ -46,25 +46,30 @@ SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
 SMTP_USER = os.getenv("SMTP_USER", "your-email@gmail.com")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "your-app-password")
-yag = yagmail.SMTP(SMTP_USER, SMTP_PASSWORD)
-def _send_email_sync(
-    to_email: str, 
-    subject: str, 
-    body_text: str, 
-    body_html: Optional[str] = None
-) -> bool:
-    """Executes the synchronous yagmail network call."""
-    # Yagmail accepts text or HTML directly in the contents list.
-    # If body_html is provided, pass it; otherwise fallback to body_text.
-    contents = [body_html] if body_html else [body_text]
+resend.api_key = os.environ.get("RESEND_API_KEY")
 
+def _send_email_sync(
+    to_email: str,
+    subject: str,
+    body_text: str,
+    body_html: Optional[str] = None,
+) -> bool:
+    """Sends email via Resend HTTP API (Port 443) to bypass Render SMTP blocks."""
     try:
-        yag.send(
-            to=to_email,
-            subject=subject,
-            contents=contents
+        # Use onboarding@resend.dev during testing.
+        # Once you verify your domain in Resend, change this to 'Emergency Dispatch <dispatch@yourdomain.com>'
+        params = {
+            "from": "Emergency Dispatch <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": subject,
+            "html": body_html if body_html else f"<p>{body_text}</p>",
+            "text": body_text,
+        }
+
+        response = resend.Emails.send(params)
+        logger.info(
+            f"Email successfully sent to {to_email} (ID: {response.get('id')})"
         )
-        logger.info(f"Email successfully sent to {to_email}")
         return True
     except Exception as e:
         logger.error(f"Failed to send email to {to_email}: {e}")
@@ -73,10 +78,10 @@ def _send_email_sync(
 
 # 2. Non-blocking Async Wrapper
 async def send_email_async(
-    to_email: str, 
-    subject: str, 
-    body_text: str, 
-    body_html: Optional[str] = None
+    to_email: str,
+    subject: str,
+    body_text: str,
+    body_html: Optional[str] = None,
 ) -> bool:
     """Offloads the synchronous yagmail function to a background thread pool."""
     return await asyncio.to_thread(
