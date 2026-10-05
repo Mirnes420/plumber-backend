@@ -59,7 +59,7 @@ def _send_email_sync(
         # Use onboarding@resend.dev during testing.
         # Once you verify your domain in Resend, change this to 'Emergency Dispatch <dispatch@yourdomain.com>'
         params = {
-            "from": "Emergency Dispatch <onboarding@resend.dev>",
+            "from": "Dispatch <dispatch@coherzo.gentlemansolutions.com>",
             "to": [to_email],
             "subject": subject,
             "html": body_html if body_html else f"<p>{body_text}</p>",
