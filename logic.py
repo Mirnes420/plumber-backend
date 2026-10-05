@@ -422,9 +422,6 @@ async def process_incoming_incident(
                             </td>
                         </tr>
 
-                        <!-- Conditional Incident Image -->
-                        {image_block}
-
                         <!-- Footer -->
                         <tr>
                             <td style="background-color: #F1F5F9; padding: 24px; border-top: 1px solid #E2E8F0; text-align: center;">
