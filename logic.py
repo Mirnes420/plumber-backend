@@ -375,11 +375,11 @@ async def process_incoming_incident(
                 Gear: {gear_str}"""
 
             image_block = ""
-            if image_url:
+            if media_url:
                 image_block = f"""
                 <tr>
                     <td style="padding: 0 24px 20px 24px;">
-                        <img src="{image_url}" alt="Incident Media" style="width: 100%; max-width: 550px; height: auto; border-radius: 8px; border: 1px solid #E2E8F0; display: block;" />
+                        <img src="{media_url}" alt="Incident Media" style="width: 100%; max-width: 550px; height: auto; border-radius: 8px; border: 1px solid #E2E8F0; display: block;" />
                     </td>
                 </tr>
                 """
