@@ -374,15 +374,7 @@ async def process_incoming_incident(
                 Urgency: {urgency}
                 Gear: {gear_str}"""
 
-            image_block = ""
-            if media_url:
-                image_block = f"""
-                <tr>
-                    <td style="padding: 0 24px 20px 24px;">
-                        <img src="{media_url}" alt="Incident Media" style="width: 100%; max-width: 550px; height: auto; border-radius: 8px; border: 1px solid #E2E8F0; display: block;" />
-                    </td>
-                </tr>
-                """
+            
 
             html_content = f"""
             <!DOCTYPE html>
@@ -418,9 +410,6 @@ async def process_incoming_incident(
                                 </p>
                             </td>
                         </tr>
-
-                        <!-- Conditional Image Block -->
-                        {image_block}
 
                         <!-- Footer -->
                         <tr>
