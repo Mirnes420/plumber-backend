@@ -369,27 +369,73 @@ async def process_incoming_incident(
         if dispatcher_email:
             subject = f"NEW INCIDENT: {professional_type.capitalize()} Required"
             text_content = f"""New issue reported by {customer_name or 'Customer'}.
-Details: {body}
-Location: {location or 'Unknown'}
-Urgency: {urgency}
-Gear: {gear_str}"""
+                Details: {body}
+                Location: {location or 'Unknown'}
+                Urgency: {urgency}
+                Gear: {gear_str}"""
+
+            image_block = ""
+            if image_url:
+                image_block = f"""
+                <tr>
+                    <td style="padding: 0 24px 20px 24px;">
+                        <img src="{image_url}" alt="Incident Media" style="width: 100%; max-width: 550px; height: auto; border-radius: 8px; border: 1px solid #E2E8F0; display: block;" />
+                    </td>
+                </tr>
+                """
 
             html_content = f"""
-            <html>
-            <body>
-                <h2>New Incident Alert</h2>
-                <p><strong>Dear {dispatcher_name or 'Dispatcher'},</strong></p>
-                <p>You got a new incident:</p>
-                <p><strong>Customer:</strong> {customer_name or 'Unknown'} ({customer_phone})</p>
-                <p><strong>Type:</strong> {professional_type}</p>
-                <p><strong>Location:</strong> {location or 'Not provided'}</p>
-                <p><strong>Urgency:</strong> {urgency}</p>
-                <p><strong>Details:</strong> {body}</p>
-                <p><strong>Gear:</strong> {gear_str}</p>
-                <hr>
-                <p><a href="{google_maps_link}">Open in Google Maps</a></p>
-            </body>
-            </html>
+            <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{subject}</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #F8FAFC; padding: 40px 10px;">
+            <tr>
+                <td align="center">
+                    <table role="presentation" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                        
+                        <!-- Header -->
+                        <tr>
+                            <td style="background-color: #0F172A; padding: 24px; text-align: left;">
+                                <h1 style="color: #FFFFFF; margin: 0; font-size: 20px; font-weight: 600; tracking: -0.5px;">
+                                    Emergency Dispatch System
+                                </h1>
+                            </td>
+                        </tr>
+
+                        <!-- Body Content -->
+                        <tr>
+                            <td style="padding: 32px 24px 20px 24px;">
+                                <h2 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 600; color: #0F172A;">
+                                    {subject}
+                                </h2>
+                                <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #334155; white-space: pre-line;">
+                                    {body_text}
+                                </p>
+                            </td>
+                        </tr>
+
+                        <!-- Conditional Image Block -->
+                        {image_block}
+
+                        <!-- Footer -->
+                        <tr>
+                            <td style="background-color: #F1F5F9; padding: 16px 24px; border-top: 1px solid #E2E8F0; text-align: center;">
+                                <p style="margin: 0; font-size: 12px; color: #64748B;">
+                                    Automated Alert System • Do not reply directly to this email
+                                </p>
+                            </td>
+                            </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+    </body>
+    </html>
             """
 
             # 非同期でメール送信（ブロックせえへんように create_task で投げる）
