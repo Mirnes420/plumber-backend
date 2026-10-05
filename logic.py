@@ -414,7 +414,7 @@ async def process_incoming_incident(
                                     {subject}
                                 </h2>
                                 <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #334155; white-space: pre-line;">
-                                    {body_text}
+                                    {text_content}
                                 </p>
                             </td>
                         </tr>
