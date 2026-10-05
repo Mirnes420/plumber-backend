@@ -398,7 +398,7 @@ async def process_incoming_incident(
                                 <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
                                     <tr>
                                         <td style="vertical-align: middle;">
-                                            <img src="{header_logo_url}" alt="Coherzo" style="height: 32px; width: auto; display: block; -webkit-filter: brightness(0) invert(1); filter: brightness(0) invert(1);" />
+                                            <img src="{header_logo_url}" alt="Coherzo" style="height: 32px; width: auto; display: block;/>
                                         </td>
                                         <td style="vertical-align: middle; text-align: right;">
                                             <span style="color: #94A3B8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">
