@@ -375,7 +375,7 @@ async def process_incoming_incident(
                 Gear: {gear_str}"""
 
 
-            header_logo_url = f"https://github.com/Mirnes420/plumber-backend/blob/main/images/coherzo-dark.png"  # Assuming this is hosted in the same directory or accessible path
+            header_logo_url = f"https://raw.githubusercontent.com/Mirnes420/plumber-backend/main/images/coherzo-dark.png"  # Assuming this is hosted in the same directory or accessible path
             
 
             html_content = f"""
