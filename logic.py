@@ -13,7 +13,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Optional
 import resend
-
+import urllib.parse
 
 
 # Force UTF-8 encoding for standard output and error on Windows
@@ -370,7 +370,7 @@ async def process_incoming_incident(
             subject = f"NEW INCIDENT: {professional_type.capitalize()} Required"
 
 
-            import urllib.parse
+            
 
             # 1. Determine Urgency Colors
             urgency_upper = (urgency or "MEDIUM").upper()
