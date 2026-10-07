@@ -369,6 +369,11 @@ async def process_incoming_incident(
         if dispatcher_email:
             subject = f"NEW INCIDENT: {professional_type.capitalize()} Required"
 
+            text_content = f"""New issue reported by {customer_name or 'Customer'}.
+                Details: {body}
+                Location: {location or 'Unknown'}
+                Urgency: {urgency}
+                Gear: {gear_str}"""
 
             
 
@@ -407,117 +412,117 @@ async def process_incoming_incident(
 
             # 5. Full HTML Template
             html_content = f"""
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{subject}</title>
-</head>
-<body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #F8FAFC; padding: 40px 10px;">
-        <tr>
-            <td align="center">
-                <table role="presentation" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
-                    
-                    <!-- Header -->
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{subject}</title>
+            </head>
+            <body style="margin: 0; padding: 0; background-color: #F8FAFC; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #1E293B;">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #F8FAFC; padding: 40px 10px;">
                     <tr>
-                        <td style="background-color: #0F172A; padding: 20px 24px;">
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                        <td align="center">
+                            <table role="presentation" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 12px; border: 1px solid #E2E8F0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+                                
+                                <!-- Header -->
                                 <tr>
-                                    <td style="vertical-align: middle;">
-                                        <img src="{header_logo_url}" alt="Coherzo Logo" height="32" style="height: 32px; width: auto; max-width: 150px; display: block;" />
-                                    </td>
-                                    <td style="vertical-align: middle; text-align: right;">
-                                        <span style="color: #94A3B8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">
-                                            Emergency Dispatch
-                                        </span>
+                                    <td style="background-color: #0F172A; padding: 20px 24px;">
+                                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                                            <tr>
+                                                <td style="vertical-align: middle;">
+                                                    <img src="{header_logo_url}" alt="Coherzo Logo" height="32" style="height: 32px; width: auto; max-width: 150px; display: block;" />
+                                                </td>
+                                                <td style="vertical-align: middle; text-align: right;">
+                                                    <span style="color: #94A3B8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">
+                                                        Emergency Dispatch
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </table>
                                     </td>
                                 </tr>
-                            </table>
-                        </td>
-                    </tr>
 
-                    <!-- Body Content -->
-                    <tr>
-                        <td style="padding: 32px 24px 20px 24px;">
-                            
-                            <!-- Top Bar: Urgency Badge & Title -->
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 16px;">
+                                <!-- Body Content -->
                                 <tr>
-                                    <td>
-                                        <span style="display: inline-block; background-color: {badge_bg}; color: {badge_text}; border: 1px solid {badge_border}; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 10px; border-radius: 9999px;">
-                                            URGENCY: {urgency_upper}
-                                        </span>
+                                    <td style="padding: 32px 24px 20px 24px;">
+                                        
+                                        <!-- Top Bar: Urgency Badge & Title -->
+                                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 16px;">
+                                            <tr>
+                                                <td>
+                                                    <span style="display: inline-block; background-color: {badge_bg}; color: {badge_text}; border: 1px solid {badge_border}; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; padding: 4px 10px; border-radius: 9999px;">
+                                                        URGENCY: {urgency_upper}
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: #0F172A;">
+                                            {subject}
+                                        </h2>
+
+                                        <!-- Separate Summary Box -->
+                                        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+                                            <tr>
+                                                <td style="background-color: #F8FAFC; border-left: 4px solid #2563EB; border-radius: 4px; padding: 16px;">
+                                                    <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                        Reported by: {customer_name or 'Customer'}
+                                                    </p>
+                                                    <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #1E293B;">
+                                                        {body}
+                                                    </p>
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <!-- Location Section -->
+                                        <div style="margin-bottom: 24px;">
+                                            <p style="margin: 0 0 6px 0; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                Location:
+                                            </p>
+                                            <p style="margin: 0 0 8px 0; font-size: 15px; color: #0F172A; font-weight: 500;">
+                                                {location or 'Unknown'}
+                                            </p>
+                                            <p style="margin: 0; font-size: 13px;">
+                                                <a href="{gmaps_url}" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 600; margin-right: 12px;">
+                                                    📍 Open in Google Maps
+                                                </a>
+                                                <a href="{applemaps_url}" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 600;">
+                                                    🗺️ Open in Apple Maps
+                                                </a>
+                                            </p>
+                                        </div>
+
+                                        <!-- Tools & Gear List -->
+                                        <div>
+                                            <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">
+                                                Required Tools & Gear:
+                                            </p>
+                                            <ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; color: #334155;">
+                                                {gear_list_html}
+                                            </ul>
+                                        </div>
+
                                     </td>
                                 </tr>
-                            </table>
 
-                            <h2 style="margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: #0F172A;">
-                                {subject}
-                            </h2>
-
-                            <!-- Separate Summary Box -->
-                            <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+                                <!-- Footer -->
                                 <tr>
-                                    <td style="background-color: #F8FAFC; border-left: 4px solid #2563EB; border-radius: 4px; padding: 16px;">
-                                        <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px;">
-                                            Reported by: {customer_name or 'Customer'}
+                                    <td style="background-color: #F1F5F9; padding: 24px; border-top: 1px solid #E2E8F0; text-align: center;">
+                                        <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.5;">
+                                            Automated Alert System • Do not reply directly to this email
                                         </p>
-                                        <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #1E293B;">
-                                            {body}
-                                        </p>
                                     </td>
                                 </tr>
+
                             </table>
-
-                            <!-- Location Section -->
-                            <div style="margin-bottom: 24px;">
-                                <p style="margin: 0 0 6px 0; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">
-                                    Location:
-                                </p>
-                                <p style="margin: 0 0 8px 0; font-size: 15px; color: #0F172A; font-weight: 500;">
-                                    {location or 'Unknown'}
-                                </p>
-                                <p style="margin: 0; font-size: 13px;">
-                                    <a href="{gmaps_url}" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 600; margin-right: 12px;">
-                                        📍 Open in Google Maps
-                                    </a>
-                                    <a href="{applemaps_url}" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 600;">
-                                        🗺️ Open in Apple Maps
-                                    </a>
-                                </p>
-                            </div>
-
-                            <!-- Tools & Gear List -->
-                            <div>
-                                <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">
-                                    Required Tools & Gear:
-                                </p>
-                                <ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; color: #334155;">
-                                    {gear_list_html}
-                                </ul>
-                            </div>
-
                         </td>
                     </tr>
-
-                    <!-- Footer -->
-                    <tr>
-                        <td style="background-color: #F1F5F9; padding: 24px; border-top: 1px solid #E2E8F0; text-align: center;">
-                            <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.5;">
-                                Automated Alert System • Do not reply directly to this email
-                            </p>
-                        </td>
-                    </tr>
-
                 </table>
-            </td>
-        </tr>
-    </table>
-</body>
-</html>
-"""
+            </body>
+            </html>
+            """
 
             # 非同期でメール送信（ブロックせえへんように create_task で投げる）
             asyncio.create_task(
@@ -529,7 +534,7 @@ async def process_incoming_incident(
                 )
             )
             print(f"📧 Email dispatch queued for {dispatcher_email}")
-        # ============================================
+            # ============================================
 
         # --- WHATSAPP DISPATCH ---
         if not target_contractor:
