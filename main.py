@@ -314,73 +314,121 @@ class IncidentJsonPayload(BaseModel):
 
 # here we handle new incidents
 @app.post("/api/incident")
-async def api_incident(
-    request: Request,
-    # Make all Form fields optional so FastAPI doesn't reject JSON requests
-    phone: Optional[str] = Form(None),
-    description: Optional[str] = Form(None),
-    location: Optional[str] = Form(None),
-    customer_name: Optional[str] = Form(None),
-    plumber_id: Optional[str] = Form(None),
-    image: Optional[UploadFile] = File(None),
-    demo: Optional[str] = Form(None),
-    professional_type: Optional[str] = Form(None),
-    language: Optional[str] = Form(None)
-):
-    print(f"\n=================== WEB FORM / JSON INBOUND ===================")
+async def api_incident(request: Request):
+    print(f"\n=================== /API/INCIDENT ===================")
 
-    # Detect content type
-    content_type = request.headers.get("content-type", "").lower()
-    print(f"[DEBUG] Content-Type: {content_type}")
+    raw_ct = request.headers.get("content-type", "")
+    content_type = raw_ct.lower()
+    print(f"[DEBUG] Content-Type raw: '{raw_ct}'")
 
-    is_demo = False
+    phone = None
+    description = None
+    location = None
+    customer_name = None
+    plumber_id = ""
+    demo = None
+    professional_type = "contractor"
+    language = "en"
     image_bytes = None
+    is_demo = False
 
-    # ─── Parse JSON body ───
+    # ─── JSON branch ───
     if "application/json" in content_type:
-        print("[INFO] Parsing as JSON request")
-        body = await request.body()
-        if not body:
+        print("[INFO] Routing to JSON parser")
+        body_bytes = await request.body()
+        print(f"[DEBUG] Raw body bytes length: {len(body_bytes)}")
+
+        if not body_bytes:
+            print("[ERROR] JSON body is empty")
             return JSONResponse({"status": "error", "detail": "Empty JSON body"}, status_code=400)
+
+        # Explicit decode with fallback
         try:
-            payload = IncidentJsonPayload(**json.loads(body))
-        except Exception as e:
+            body_str = body_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            body_str = body_bytes.decode("utf-8", errors="replace")
+
+        print(f"[DEBUG] Decoded body: {body_str[:2000]}")
+
+        try:
+            data = json.loads(body_str)
+        except json.JSONDecodeError as e:
+            print(f"[ERROR] JSON parse failed: {e}")
             return JSONResponse({"status": "error", "detail": f"Invalid JSON: {e}"}, status_code=400)
 
-        phone = payload.phone
-        description = payload.description
-        location = payload.location
-        customer_name = payload.customer_name
-        plumber_id = payload.plumber_id
-        demo = payload.demo
-        professional_type = payload.professional_type or "contractor"
-        language = payload.language or "en"
-        # image is None for JSON requests
+        if not isinstance(data, dict):
+            print(f"[ERROR] JSON root is {type(data).__name__}, expected object")
+            return JSONResponse({"status": "error", "detail": "JSON must be an object"}, status_code=400)
 
-    # ─── Parse Form body (multipart or urlencoded) ───
+        phone = data.get("phone")
+        description = data.get("description")
+        location = data.get("location")
+        customer_name = data.get("customer_name")
+        plumber_id = data.get("plumber_id") or ""
+        demo = data.get("demo")
+        professional_type = data.get("professional_type") or "contractor"
+        language = data.get("language") or "en"
+        print(f"[INFO] JSON parsed OK")
+
+    # ─── Form branch ───
+    elif "multipart" in content_type or "urlencoded" in content_type:
+        print("[INFO] Routing to Form parser")
+        try:
+            form = await request.form()
+        except Exception as e:
+            print(f"[ERROR] FastAPI form parse failed: {e}")
+            return JSONResponse({"status": "error", "detail": f"Form parse error: {e}"}, status_code=400)
+
+        phone = form.get("phone")
+        description = form.get("description")
+        location = form.get("location")
+        customer_name = form.get("customer_name")
+        plumber_id = form.get("plumber_id") or ""
+        demo = form.get("demo")
+        professional_type = form.get("professional_type") or "contractor"
+        language = form.get("language") or "en"
+
+        uploaded = form.get("image")
+        if uploaded and hasattr(uploaded, "filename") and uploaded.filename:
+            image_bytes = await uploaded.read()
+            print(f"DEBUG: Image attached: {uploaded.filename} ({len(image_bytes)} bytes)")
+        print(f"[INFO] Form parsed OK")
+
+    # ─── Unknown content type ───
     else:
-        print("[INFO] Parsing as Form request")
-        # FastAPI already parsed the form fields via the Form() parameters above
-        # We just need to validate required fields
-        if not phone or not description:
-            return JSONResponse(
-                {"status": "error", "detail": "phone and description are required"},
-                status_code=400
-            )
+        print(f"[WARNING] Unrecognized Content-Type: '{raw_ct}'")
+        # Last-ditch: try form parser anyway
+        try:
+            form = await request.form()
+            phone = form.get("phone")
+            description = form.get("description")
+            location = form.get("location")
+            customer_name = form.get("customer_name")
+            plumber_id = form.get("plumber_id") or ""
+            demo = form.get("demo")
+            professional_type = form.get("professional_type") or "contractor"
+            language = form.get("language") or "en"
+            print(f"[INFO] Fallback form parser succeeded")
+        except Exception as e:
+            print(f"[ERROR] Fallback parser also failed: {e}")
+            return JSONResponse({"status": "error", "detail": f"Unsupported Content-Type: {raw_ct}"}, status_code=415)
 
-        # Handle image if present
-        if image and image.filename:
-            image_bytes = await image.read()
-            print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
+    # ─── Validation ───
+    print(f"[DEBUG] phone={phone} | description={description} | location={location} | name={customer_name}")
+
+    if not phone:
+        return JSONResponse({"status": "error", "detail": "phone is required"}, status_code=400)
+    if not description:
+        return JSONResponse({"status": "error", "detail": "description is required"}, status_code=400)
 
     # ─── Demo detection ───
     is_demo = str(demo).lower() in ("true", "1", "on", "yes")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Contractor: {plumber_id} | Type: {professional_type or 'contractor'} | Demo Mode: {is_demo}")
+    print(f"🌐 phone={phone} | client={customer_name or 'Unknown'} | contractor={plumber_id} | type={professional_type} | demo={is_demo}")
 
+    # ─── Business logic ───
     try:
         from logic import process_incoming_incident
 
-        # 🔥 追加：plumber_id から業者のメールと名前を引っ張る
         dispatcher_email = None
         dispatcher_name = None
         if plumber_id:
@@ -393,17 +441,16 @@ async def api_incident(
                 if plumber_obj:
                     dispatcher_email = getattr(plumber_obj, 'email', None)
                     dispatcher_name = getattr(plumber_obj, 'name', None)
-                    print(f"DEBUG: Found contractor {dispatcher_name} | email: {dispatcher_email}")
+                    print(f"DEBUG: contractor={dispatcher_name} email={dispatcher_email}")
             finally:
                 db.close()
-        # 🔥 ここまで追加
 
         triage_result, notification_sent = await process_incoming_incident(
-            customer_phone=phone, 
-            body=description, 
+            customer_phone=phone,
+            body=description,
             location=location,
             customer_name=customer_name,
-            media_url=None, 
+            media_url=None,
             sender_override=None,
             contractor_override=plumber_id,
             image_bytes=image_bytes,
@@ -416,7 +463,7 @@ async def api_incident(
 
         urgency = triage_result.get("urgency", "MEDIUM")
         summary = triage_result.get("summary", "")
-        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
+        print(f"DEBUG: urgency={urgency} | notified={notification_sent}")
 
         from logic import get_localized_incident_copy
         reply_msg = "\n".join(
@@ -440,19 +487,17 @@ async def api_incident(
 
         print("Web form registration complete.")
         return JSONResponse({
-            "status": "success", 
-            "urgency": urgency, 
+            "status": "success",
+            "urgency": urgency,
             "summary": summary,
             "gear": gear_info
         })
 
     except Exception as api_err:
-        print(f"❌ CRITICAL API_INCIDENT EXCEPTION CRASH:")
-        print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
+        print(f"❌ CRITICAL API_INCIDENT EXCEPTION:")
+        traceback.print_exc()
         sys.stdout.flush()
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
-
-
 
 
 # retell endpoint
