@@ -474,120 +474,108 @@ async def api_incident(
 
 # retell endpoint
 
+
+RETELL_API_KEY = os.getenv("RETELL_API_KEY")  # Set this in Render environment variables
+
 @app.post("/retell-webhook")
 async def retell_webhook(request: Request):
-    """
-    Receives Retell call webhooks, extracts incident details from transcript/summary,
-    and forwards them to the internal /api/incident endpoint.
-    """
     try:
-        payload = await request.json()
+        body = await request.body()
+        print(f"[DEBUG] Raw body ({len(body)} bytes): {body[:1000] if body else 'EMPTY'}")
+        
+        if not body:
+            return JSONResponse({"status": "ignored", "reason": "empty body"})
+        
+        payload = json.loads(body)
         event = payload.get("event")
-        call = payload.get("call", {})
-
-        print(f"\n=================== RETELL WEBHOOK ===================")
-        print(f"📞 Event: {event} | Call ID: {call.get('call_id')}")
-
-        # Only process analyzed or ended calls
+        call = payload.get("call") or {}
+        call_id = call.get("call_id") or payload.get("call_id")
+        
+        print(f"📞 Event: {event} | Call ID: {call_id}")
+        
         if event not in ("call_analyzed", "call_ended"):
-            print(f"[INFO] Ignoring event: {event}")
-            return {"status": "ignored", "event": event}
-
-        # Extract phone number
-        phone = call.get("from_number") or call.get("caller_number") or ""
-        if not phone:
-            print("[ERROR] No phone number found in Retell payload")
-            return {"status": "error", "detail": "No phone number"}, 400
-
-        # Extract description from summary or transcript
-        transcript = call.get("transcript") or ""
-        summary = call.get("call_summary") or ""
+            return JSONResponse({"status": "ignored", "event": event})
+        
+        if not call_id:
+            return JSONResponse({"status": "error", "detail": "No call_id"}, status_code=400)
+        
+        # ─── FETCH FULL CALL DATA FROM RETELL API ───
+        async with httpx.AsyncClient() as client:
+            retell_response = await client.get(
+                f"https://api.retellai.com/v1/call/{call_id}",
+                headers={"Authorization": f"Bearer {RETELL_API_KEY}"},
+                timeout=30.0
+            )
+        
+        if retell_response.status_code != 200:
+            print(f"[ERROR] Retell API returned {retell_response.status_code}: {retell_response.text[:500]}")
+            return JSONResponse({"status": "error", "detail": "Failed to fetch call from Retell"}, status_code=502)
+        
+        full_call = retell_response.json()
+        print(f"[DEBUG] Full call data keys: {list(full_call.keys())}")
+        
+        # Extract data from the full call object
+        phone = full_call.get("from_number") or full_call.get("caller_number") or ""
+        transcript = full_call.get("transcript") or ""
+        summary = full_call.get("call_summary") or full_call.get("summary") or ""
         description = summary if summary else transcript
         if not description:
             description = "Incident reported via voice call."
-
-        print(f"📱 Phone: {phone}")
-        print(f"📝 Description: {description[:200]}...")
-        print(f"📄 Transcript: {transcript[:200]}...")
-
-        # Try to extract name and location from transcript with simple regex
+        
+        # Try to get extracted variables from Retell's tool results if available
         customer_name = ""
         location = ""
-
-        if transcript:
-            # Name patterns: "my name is John", "this is Jane", "I'm Mike"
-            name_patterns = [
-                r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
-                r"this is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
-                r"i am ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
-                r"i'm ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
-            ]
-            for pattern in name_patterns:
-                match = re.search(pattern, transcript, re.IGNORECASE)
-                if match:
-                    customer_name = match.group(1).strip()
-                    print(f"👤 Extracted name: {customer_name}")
-                    break
-
-            # Location patterns: "in Dar es Salaam", "at Ubungo", "location is ..."
-            loc_patterns = [
-                r"(?:in|at|near|around)\s+([A-Z][a-zA-Z\s]+(?:,\s*[A-Z][a-zA-Z\s]+)?)",
-                r"location is ([A-Za-z\s,]+)",
-                r"address is ([A-Za-z0-9\s,]+)",
-            ]
-            for pattern in loc_patterns:
-                match = re.search(pattern, transcript, re.IGNORECASE)
-                if match:
-                    location = match.group(1).strip()
-                    # Clean up: stop at sentence endings
-                    location = re.split(r'[.!?;]', location)[0].strip()
-                    if len(location) > 3:  # avoid false positives like "in a"
-                        print(f"📍 Extracted location: {location}")
-                        break
-
-        # Build form data to forward to /api/incident
-        # We use an internal HTTP call so all existing logic is reused exactly
+        professional_type = "contractor"
+        
+        # Retell sometimes stores extracted variables in call_object or retell_llm_dynamic_variables
+        dynamic_vars = full_call.get("retell_llm_dynamic_variables") or {}
+        if dynamic_vars:
+            customer_name = dynamic_vars.get("customer_name") or ""
+            location = dynamic_vars.get("location") or ""
+            professional_type = dynamic_vars.get("professional_type") or "contractor"
+            print(f"[DEBUG] Dynamic vars found: {dynamic_vars}")
+        
+        # Fallback: regex from transcript
+        if transcript and not customer_name:
+            import re
+            name_match = re.search(r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", transcript, re.IGNORECASE)
+            if name_match:
+                customer_name = name_match.group(1)
+        
+        if transcript and not location:
+            import re
+            loc_match = re.search(r"(?:in|at)\s+([A-Z][a-zA-Z\s,]+)", transcript, re.IGNORECASE)
+            if loc_match:
+                location = loc_match.group(1).strip()
+                location = re.split(r'[.!?;]', location)[0].strip()
+        
+        print(f"📱 Phone: {phone} | Name: {customer_name} | Location: {location}")
+        
+        # Forward to /api/incident
         form_data = {
             "phone": phone,
             "description": description,
             "location": location,
             "customer_name": customer_name,
-            "plumber_id": "",           # not available from voice call
-            "professional_type": "contractor",
+            "plumber_id": "",
+            "professional_type": professional_type,
             "language": "en",
             "demo": "false",
         }
-
-        # Determine base URL (works both local and deployed)
+        
         base_url = str(request.base_url).rstrip("/")
-        internal_url = f"{base_url}/api/incident"
-
-        print(f"[INFO] Forwarding to {internal_url}")
-
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                internal_url,
-                data=form_data,
-                timeout=60.0
-            )
-
+            response = await client.post(f"{base_url}/api/incident", data=form_data, timeout=60.0)
+        
         if response.status_code == 200:
-            print("[SUCCESS] Forwarded to /api/incident successfully")
-            return {"status": "success", "incident_response": response.json()}
+            return JSONResponse({"status": "success", "incident_response": response.json()})
         else:
-            print(f"[ERROR] /api/incident returned {response.status_code}: {response.text[:500]}")
-            return {
-                "status": "error", 
-                "detail": f"Internal endpoint returned {response.status_code}",
-                "body": response.text[:500]
-            }, 502
-
+            return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=502)
+            
     except Exception as e:
         import traceback
-        print(f"❌ RETELL WEBHOOK EXCEPTION:")
         traceback.print_exc()
-        return {"status": "error", "detail": str(e)}, 500
-
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
 
 
 
