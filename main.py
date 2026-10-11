@@ -298,28 +298,71 @@ async def line_webhook(request: Request):
 # here we handle new incidents
 @app.post("/api/incident")
 async def api_incident(
-    phone: str = Form(...),
-    description: str = Form(...),
-    location: str = Form(None),
-    customer_name: str = Form(None),
-    plumber_id: str = Form(None),
-    image: UploadFile = File(None),
-    demo: str = Form(None),
-    professional_type: str = Form(None),
-    language: str = Form(None)
+    request: Request,
+    # Make all Form fields optional so FastAPI doesn't reject JSON requests
+    phone: Optional[str] = Form(None),
+    description: Optional[str] = Form(None),
+    location: Optional[str] = Form(None),
+    customer_name: Optional[str] = Form(None),
+    plumber_id: Optional[str] = Form(None),
+    image: Optional[UploadFile] = File(None),
+    demo: Optional[str] = Form(None),
+    professional_type: Optional[str] = Form(None),
+    language: Optional[str] = Form(None)
 ):
-    print(f"\n=================== WEB FORM INBOUND ===================")
-    is_demo = str(demo).lower() in ("true", "1", "on", "yes")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Contractor: {plumber_id} | Type: {professional_type or 'contractor'} | Demo Mode: {is_demo}")
-    
-    try:
-        image_bytes = None
+    print(f"\n=================== WEB FORM / JSON INBOUND ===================")
+
+    # Detect content type
+    content_type = request.headers.get("content-type", "").lower()
+    print(f"[DEBUG] Content-Type: {content_type}")
+
+    is_demo = False
+    image_bytes = None
+
+    # ─── Parse JSON body ───
+    if "application/json" in content_type:
+        print("[INFO] Parsing as JSON request")
+        body = await request.body()
+        if not body:
+            return JSONResponse({"status": "error", "detail": "Empty JSON body"}, status_code=400)
+        try:
+            payload = IncidentJsonPayload(**json.loads(body))
+        except Exception as e:
+            return JSONResponse({"status": "error", "detail": f"Invalid JSON: {e}"}, status_code=400)
+
+        phone = payload.phone
+        description = payload.description
+        location = payload.location
+        customer_name = payload.customer_name
+        plumber_id = payload.plumber_id
+        demo = payload.demo
+        professional_type = payload.professional_type or "contractor"
+        language = payload.language or "en"
+        # image is None for JSON requests
+
+    # ─── Parse Form body (multipart or urlencoded) ───
+    else:
+        print("[INFO] Parsing as Form request")
+        # FastAPI already parsed the form fields via the Form() parameters above
+        # We just need to validate required fields
+        if not phone or not description:
+            return JSONResponse(
+                {"status": "error", "detail": "phone and description are required"},
+                status_code=400
+            )
+
+        # Handle image if present
         if image and image.filename:
             image_bytes = await image.read()
             print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
-            
+
+    # ─── Demo detection ───
+    is_demo = str(demo).lower() in ("true", "1", "on", "yes")
+    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Contractor: {plumber_id} | Type: {professional_type or 'contractor'} | Demo Mode: {is_demo}")
+
+    try:
         from logic import process_incoming_incident
-        
+
         # 🔥 追加：plumber_id から業者のメールと名前を引っ張る
         dispatcher_email = None
         dispatcher_name = None
@@ -327,7 +370,6 @@ async def api_incident(
             from database import SessionLocal, Contractor
             db = SessionLocal()
             try:
-                # ID で検索、なければ電話番号の末尾一致で検索
                 plumber_obj = db.query(Contractor).filter(
                     (Contractor.id == plumber_id) | (Contractor.contractor_phone.like(f"%{plumber_id}"))
                 ).first()
@@ -338,7 +380,7 @@ async def api_incident(
             finally:
                 db.close()
         # 🔥 ここまで追加
-        
+
         triage_result, notification_sent = await process_incoming_incident(
             customer_phone=phone, 
             body=description, 
@@ -354,7 +396,7 @@ async def api_incident(
             dispatcher_name=dispatcher_name,
             language=language
         )
-        
+
         urgency = triage_result.get("urgency", "MEDIUM")
         summary = triage_result.get("summary", "")
         print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
@@ -392,78 +434,6 @@ async def api_incident(
         print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
         sys.stdout.flush()
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
-    # check if demo mode is enabled
-    print(f"\n=================== WEB FORM INBOUND ===================")
-    # CRITICAL: Robust demo detection. Handles "true", "1", "on", boolean True, etc.
-    is_demo = str(demo).lower() in ("true", "1", "on", "yes")
-    print(f"🌐 Submission processing for destination endpoint: {phone} | Client: {customer_name or 'Unknown'} | Contractor: {plumber_id} | Type: {professional_type or 'contractor'} | Demo Mode: {is_demo}")
-    
-    try:
-        image_bytes = None
-        if image and image.filename:
-            image_bytes = await image.read()
-            print(f"DEBUG: Web form binary attachment detected: {image.filename} ({len(image_bytes)} bytes)")
-            
-        from logic import process_incoming_incident
-        
-        # CHANGED: Passed location and customer_name as keyword arguments into your processing routine
-        triage_result, notification_sent = await process_incoming_incident(
-            customer_phone=phone, 
-            body=description, 
-            location=location,
-            customer_name=customer_name,
-            media_url=None, 
-            sender_override=None,
-            plumber_override=plumber_id,
-            image_bytes=image_bytes,
-            demo=is_demo,
-            professional_type=professional_type or 'contractor',
-            dispatcher_email=dispatcher_email
-        )
-        
-        urgency = triage_result.get("urgency", "MEDIUM")
-        summary = triage_result.get("summary", "")
-        print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
-
-        from logic import get_localized_incident_copy
-        reply_msg = "\n".join(
-            get_localized_incident_copy(
-                "customer_confirmation",
-                language=language,
-                notification_sent=notification_sent,
-                summary=summary,
-            )
-        )
-
-        # Send customer confirmation ONLY — this is the sole message that
-        # goes to the customer's own number. The contractor's detailed dispatch
-        # alert (client details, gear list, nav links) is sent separately,
-        # to target_plumber, inside process_incoming_incident().
-        await send_whatsapp_message(
-            to=phone,
-            payload_type="text",
-            content={"body": reply_msg}
-        )
-
-        gear_info = triage_result.get("gear", "Standard kit")
-        if isinstance(gear_info, list):
-            gear_info = ", ".join(str(x) for x in gear_info)
-
-        print("Web form registration complete.")
-        # send the structured json as a message
-        return JSONResponse({
-            "status": "success", 
-            "urgency": urgency, 
-            "summary": summary,
-            "gear": gear_info
-        })
-
-    except Exception as api_err:
-        print(f"❌ CRITICAL API_INCIDENT EXCEPTION CRASH:")
-        print("".join(traceback.format_exception(type(api_err), api_err, api_err.__traceback__)))
-        sys.stdout.flush()
-        return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
-    
 
 
 
@@ -546,6 +516,7 @@ async def retell_webhook(request: Request):
                 location = re.split(r'[.!?;]', location)[0].strip()
         
         print(f"📱 Phone: {phone} | Name: {customer_name} | Location: {location}")
+
         
         # Forward to /api/incident
         json_data = {
@@ -558,6 +529,8 @@ async def retell_webhook(request: Request):
             "language": "en",
             "demo": "false",
         }
+
+        print(f"JSON data of type {type(json_data)}: {json_data}")
         
         base_url = str(request.base_url).rstrip("/")
         async with httpx.AsyncClient() as client:
