@@ -29,6 +29,9 @@ from typing import List, Optional
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import httpx
+import re
+from fastapi import Request
 
 # 🔐 Password hashing (argon2 via passlib)
 from passlib.hash import argon2
@@ -465,6 +468,127 @@ async def api_incident(
         sys.stdout.flush()
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
     
+
+
+
+
+# retell endpoint
+
+@app.post("/retell-webhook")
+async def retell_webhook(request: Request):
+    """
+    Receives Retell call webhooks, extracts incident details from transcript/summary,
+    and forwards them to the internal /api/incident endpoint.
+    """
+    try:
+        payload = await request.json()
+        event = payload.get("event")
+        call = payload.get("call", {})
+
+        print(f"\n=================== RETELL WEBHOOK ===================")
+        print(f"📞 Event: {event} | Call ID: {call.get('call_id')}")
+
+        # Only process analyzed or ended calls
+        if event not in ("call_analyzed", "call_ended"):
+            print(f"[INFO] Ignoring event: {event}")
+            return {"status": "ignored", "event": event}
+
+        # Extract phone number
+        phone = call.get("from_number") or call.get("caller_number") or ""
+        if not phone:
+            print("[ERROR] No phone number found in Retell payload")
+            return {"status": "error", "detail": "No phone number"}, 400
+
+        # Extract description from summary or transcript
+        transcript = call.get("transcript") or ""
+        summary = call.get("call_summary") or ""
+        description = summary if summary else transcript
+        if not description:
+            description = "Incident reported via voice call."
+
+        print(f"📱 Phone: {phone}")
+        print(f"📝 Description: {description[:200]}...")
+        print(f"📄 Transcript: {transcript[:200]}...")
+
+        # Try to extract name and location from transcript with simple regex
+        customer_name = ""
+        location = ""
+
+        if transcript:
+            # Name patterns: "my name is John", "this is Jane", "I'm Mike"
+            name_patterns = [
+                r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+                r"this is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+                r"i am ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+                r"i'm ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)",
+            ]
+            for pattern in name_patterns:
+                match = re.search(pattern, transcript, re.IGNORECASE)
+                if match:
+                    customer_name = match.group(1).strip()
+                    print(f"👤 Extracted name: {customer_name}")
+                    break
+
+            # Location patterns: "in Dar es Salaam", "at Ubungo", "location is ..."
+            loc_patterns = [
+                r"(?:in|at|near|around)\s+([A-Z][a-zA-Z\s]+(?:,\s*[A-Z][a-zA-Z\s]+)?)",
+                r"location is ([A-Za-z\s,]+)",
+                r"address is ([A-Za-z0-9\s,]+)",
+            ]
+            for pattern in loc_patterns:
+                match = re.search(pattern, transcript, re.IGNORECASE)
+                if match:
+                    location = match.group(1).strip()
+                    # Clean up: stop at sentence endings
+                    location = re.split(r'[.!?;]', location)[0].strip()
+                    if len(location) > 3:  # avoid false positives like "in a"
+                        print(f"📍 Extracted location: {location}")
+                        break
+
+        # Build form data to forward to /api/incident
+        # We use an internal HTTP call so all existing logic is reused exactly
+        form_data = {
+            "phone": phone,
+            "description": description,
+            "location": location,
+            "customer_name": customer_name,
+            "plumber_id": "",           # not available from voice call
+            "professional_type": "contractor",
+            "language": "en",
+            "demo": "false",
+        }
+
+        # Determine base URL (works both local and deployed)
+        base_url = str(request.base_url).rstrip("/")
+        internal_url = f"{base_url}/api/incident"
+
+        print(f"[INFO] Forwarding to {internal_url}")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                internal_url,
+                data=form_data,
+                timeout=60.0
+            )
+
+        if response.status_code == 200:
+            print("[SUCCESS] Forwarded to /api/incident successfully")
+            return {"status": "success", "incident_response": response.json()}
+        else:
+            print(f"[ERROR] /api/incident returned {response.status_code}: {response.text[:500]}")
+            return {
+                "status": "error", 
+                "detail": f"Internal endpoint returned {response.status_code}",
+                "body": response.text[:500]
+            }, 502
+
+    except Exception as e:
+        import traceback
+        print(f"❌ RETELL WEBHOOK EXCEPTION:")
+        traceback.print_exc()
+        return {"status": "error", "detail": str(e)}, 500
+
+
 
 
 
