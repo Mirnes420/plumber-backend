@@ -41,6 +41,162 @@ CONTRACTOR_NUMBER = os.getenv("CONTRACTOR_WHATSAPP_NUMBER", "").strip()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+LANGUAGE_ALIASES = {
+    "en": "English",
+    "english": "English",
+    "es": "Spanish",
+    "spanish": "Spanish",
+    "fr": "French",
+    "french": "French",
+    "pt": "Portuguese",
+    "portuguese": "Portuguese",
+    "it": "Italian",
+    "italian": "Italian",
+    "de": "German",
+    "german": "German",
+}
+
+LANGUAGE_COPY = {
+    "English": {
+        "thank_you": "*Thank you.*",
+        "status_paged": "We received your web request. A contractor is being paged now!",
+        "status_logged": "We received your web request and logged the details. Our team will follow up shortly.",
+        "request_below": "Your request is below:",
+        "new_incident": "NEW INCIDENT",
+        "emergency_dispatch": "Emergency Dispatch",
+        "reported_by": "Reported by:",
+        "location": "Location:",
+        "required_tools": "Required Tools & Gear:",
+        "urgency": "Urgency",
+        "open_google_maps": "Open in Google Maps",
+        "open_apple_maps": "Open in Apple Maps",
+        "do_not_reply": "Automated Alert System • Do not reply directly to this email",
+    },
+    "Spanish": {
+        "thank_you": "*Gracias.*",
+        "status_paged": "Hemos recibido su solicitud web. ¡Se está avisando a un contratista ahora!",
+        "status_logged": "Hemos recibido su solicitud web y la hemos registrado. Nuestro equipo le responderá pronto.",
+        "request_below": "Su solicitud es la siguiente:",
+        "new_incident": "NUEVO INCIDENTE",
+        "emergency_dispatch": "Despacho de emergencia",
+        "reported_by": "Reportado por:",
+        "location": "Ubicación:",
+        "required_tools": "Herramientas y equipo requeridos:",
+        "urgency": "Urgencia",
+        "open_google_maps": "Abrir en Google Maps",
+        "open_apple_maps": "Abrir en Apple Maps",
+        "do_not_reply": "Sistema de alerta automatizado • No responda directamente a este correo",
+    },
+    "French": {
+        "thank_you": "*Merci.*",
+        "status_paged": "Nous avons bien reçu votre demande web. Un artisan est en cours d’appel !",
+        "status_logged": "Nous avons bien reçu votre demande web et l’avons enregistrée. Notre équipe vous répondra rapidement.",
+        "request_below": "Votre demande est ci-dessous :",
+        "new_incident": "NOUVEL INCIDENT",
+        "emergency_dispatch": "Alerte d’urgence",
+        "reported_by": "Signalé par :",
+        "location": "Emplacement :",
+        "required_tools": "Outils et matériel requis :",
+        "urgency": "Urgence",
+        "open_google_maps": "Ouvrir dans Google Maps",
+        "open_apple_maps": "Ouvrir dans Apple Maps",
+        "do_not_reply": "Système d’alerte automatisé • Ne répondez pas directement à cet e-mail",
+    },
+    "Portuguese": {
+        "thank_you": "*Obrigado.*",
+        "status_paged": "Recebemos sua solicitação pela web. Um contratante está sendo acionado agora!",
+        "status_logged": "Recebemos sua solicitação pela web e a registramos. Nossa equipe retornará em breve.",
+        "request_below": "Sua solicitação está abaixo:",
+        "new_incident": "NOVO INCIDENTE",
+        "emergency_dispatch": "Despacho de emergência",
+        "reported_by": "Reportado por:",
+        "location": "Localização:",
+        "required_tools": "Ferramentas e equipamentos necessários:",
+        "urgency": "Urgência",
+        "open_google_maps": "Abrir no Google Maps",
+        "open_apple_maps": "Abrir no Apple Maps",
+        "do_not_reply": "Sistema de alerta automatizado • Não responda diretamente a este e-mail",
+    },
+    "Italian": {
+        "thank_you": "*Grazie.*",
+        "status_paged": "Abbiamo ricevuto la tua richiesta web. Un professionista sta venendo contattato subito!",
+        "status_logged": "Abbiamo ricevuto la tua richiesta web e l’abbiamo registrata. Il nostro team ti contatterà a breve.",
+        "request_below": "La tua richiesta è qui sotto:",
+        "new_incident": "NUOVO INCIDENTE",
+        "emergency_dispatch": "Allerta di emergenza",
+        "reported_by": "Segnalato da:",
+        "location": "Posizione:",
+        "required_tools": "Strumenti e attrezzature richiesti:",
+        "urgency": "Urgenza",
+        "open_google_maps": "Apri in Google Maps",
+        "open_apple_maps": "Apri in Apple Maps",
+        "do_not_reply": "Sistema di allerta automatico • Non rispondere direttamente a questa e-mail",
+    },
+    "German": {
+        "thank_you": "*Vielen Dank.*",
+        "status_paged": "Wir haben Ihre Web-Anfrage erhalten. Ein Fachbetrieb wird sofort benachrichtigt!",
+        "status_logged": "Wir haben Ihre Web-Anfrage erhalten und gespeichert. Unser Team meldet sich in Kürze.",
+        "request_below": "Ihre Anfrage finden Sie unten:",
+        "new_incident": "NEUER VORFALL",
+        "emergency_dispatch": "Notfallmeldung",
+        "reported_by": "Gemeldet von:",
+        "location": "Standort:",
+        "required_tools": "Benötigte Werkzeuge und Ausrüstung:",
+        "urgency": "Dringlichkeit",
+        "open_google_maps": "In Google Maps öffnen",
+        "open_apple_maps": "In Apple Maps öffnen",
+        "do_not_reply": "Automatisches Warnsystem • Antworten Sie nicht direkt auf diese E-Mail",
+    },
+}
+
+
+def normalize_language(language: Optional[str]) -> str:
+    if not language:
+        return "English"
+    key = str(language).strip()
+    if not key:
+        return "English"
+    normalized = LANGUAGE_ALIASES.get(key.lower().replace("_", "-"), key)
+    if normalized in LANGUAGE_COPY:
+        return normalized
+    title_like = key.title()
+    return title_like if title_like in LANGUAGE_COPY else "English"
+
+
+def get_localized_incident_copy(
+    kind: str,
+    language: Optional[str] = "English",
+    notification_sent: bool = False,
+    summary: str = "",
+    professional_type: str = "Service",
+):
+    locale = normalize_language(language)
+    copy = LANGUAGE_COPY.get(locale, LANGUAGE_COPY["English"])
+
+    if kind == "customer_confirmation":
+        status_line = copy["status_paged"] if notification_sent else copy["status_logged"]
+        safe_summary = summary.strip() if summary else ""
+        summary_block = [f"> {safe_summary}"] if safe_summary else []
+        return [copy["thank_you"], status_line, "", copy["request_below"], "", *summary_block]
+
+    if kind == "contractor_email_labels":
+        return {
+            "emergency_dispatch": copy["emergency_dispatch"],
+            "reported_by": copy["reported_by"],
+            "location": copy["location"],
+            "required_tools": copy["required_tools"],
+            "urgency": copy["urgency"],
+            "open_google_maps": copy["open_google_maps"],
+            "open_apple_maps": copy["open_apple_maps"],
+            "do_not_reply": copy["do_not_reply"],
+            "new_incident": copy["new_incident"],
+        }
+
+    if kind == "contractor_email_subject":
+        return f"{copy['new_incident']}: {professional_type.capitalize() if professional_type else 'Service'} Required"
+
+    return copy
+
 # SMTP Configurations
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
@@ -234,9 +390,10 @@ async def process_incoming_incident(
     image_bytes: bytes = None, 
     contractor_override: str = None,
     demo: bool = False,
-    professional_type: str = 'contractor',      # ← カンマ追加！
-    dispatcher_email: str = None,             # ← 追加
-    dispatcher_name: str = None              # ← 追加
+    professional_type: str = 'contractor',
+    dispatcher_email: str = None,
+    dispatcher_name: str = None,
+    language: str = None
 ):
     """
     Core logic to handle an incoming plumbing request.
@@ -281,9 +438,10 @@ async def process_incoming_incident(
     contractor_language = "English"
     if contractor_obj and hasattr(contractor_obj, 'language') and contractor_obj.language:
         contractor_language = contractor_obj.language
+    request_language = normalize_language(language or contractor_language)
 
     # 1. AI Triage
-    triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo, professional_type=professional_type, language=contractor_language)
+    triage_result = await analyze_triage(body, media_url, image_bytes, demo=demo, professional_type=professional_type, language=request_language)
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
 
@@ -367,13 +525,13 @@ async def process_incoming_incident(
         # 🔥 EMAIL DISPATCH（WhatsAppとは独立させる）
         # ============================================
         if dispatcher_email:
-            subject = f"NEW INCIDENT: {professional_type.capitalize()} Required"
+            localized_labels = get_localized_incident_copy("contractor_email_labels", request_language)
+            subject = f"{localized_labels['new_incident']}: {professional_type.capitalize()} Required"
 
-            text_content = f"""New issue reported by {customer_name or 'Customer'}.
-                Details: {body}
-                Location: {location or 'Unknown'}
-                Urgency: {urgency}
-                Gear: {gear_str}"""
+            text_content = f"""{localized_labels['reported_by']} {customer_name or 'Customer'}.
+                {localized_labels['location']} {location or 'Unknown'}
+                {localized_labels['urgency']}: {urgency}
+                {localized_labels['required_tools']}: {gear_str}"""
 
             
 
@@ -435,7 +593,7 @@ async def process_incoming_incident(
                                                 </td>
                                                 <td style="vertical-align: middle; text-align: right;">
                                                     <span style="color: #94A3B8; font-size: 13px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase;">
-                                                        Emergency Dispatch
+                                                        {localized_labels['emergency_dispatch']}
                                                     </span>
                                                 </td>
                                             </tr>
@@ -467,7 +625,7 @@ async def process_incoming_incident(
                                             <tr>
                                                 <td style="background-color: #F8FAFC; border-left: 4px solid #2563EB; border-radius: 4px; padding: 16px;">
                                                     <p style="margin: 0 0 6px 0; font-size: 12px; font-weight: 600; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px;">
-                                                        Reported by: {customer_name or 'Customer'}
+                                                        {localized_labels['reported_by']} {customer_name or 'Customer'}
                                                     </p>
                                                     <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #1E293B;">
                                                         {body}
@@ -479,17 +637,17 @@ async def process_incoming_incident(
                                         <!-- Location Section -->
                                         <div style="margin-bottom: 24px;">
                                             <p style="margin: 0 0 6px 0; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">
-                                                Location:
+                                                {localized_labels['location']}
                                             </p>
                                             <p style="margin: 0 0 8px 0; font-size: 15px; color: #0F172A; font-weight: 500;">
                                                 {location or 'Unknown'}
                                             </p>
                                             <p style="margin: 0; font-size: 13px;">
                                                 <a href="{gmaps_url}" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 600; margin-right: 12px;">
-                                                    📍 Open in Google Maps
+                                                    📍 {localized_labels['open_google_maps']}
                                                 </a>
                                                 <a href="{applemaps_url}" target="_blank" style="color: #2563EB; text-decoration: none; font-weight: 600;">
-                                                    🗺️ Open in Apple Maps
+                                                    🗺️ {localized_labels['open_apple_maps']}
                                                 </a>
                                             </p>
                                         </div>
@@ -497,7 +655,7 @@ async def process_incoming_incident(
                                         <!-- Tools & Gear List -->
                                         <div>
                                             <p style="margin: 0 0 8px 0; font-size: 13px; font-weight: 600; color: #475569; text-transform: uppercase; letter-spacing: 0.5px;">
-                                                Required Tools & Gear:
+                                                {localized_labels['required_tools']}
                                             </p>
                                             <ul style="margin: 0; padding-left: 20px; font-size: 14px; line-height: 1.6; color: #334155;">
                                                 {gear_list_html}
@@ -511,7 +669,7 @@ async def process_incoming_incident(
                                 <tr>
                                     <td style="background-color: #F1F5F9; padding: 24px; border-top: 1px solid #E2E8F0; text-align: center;">
                                         <p style="margin: 0; font-size: 12px; color: #64748B; line-height: 1.5;">
-                                            Automated Alert System • Do not reply directly to this email
+                                            {localized_labels['do_not_reply']}
                                         </p>
                                     </td>
                                 </tr>

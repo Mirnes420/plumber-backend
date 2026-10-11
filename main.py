@@ -306,7 +306,8 @@ async def api_incident(
     plumber_id: str = Form(None),
     image: UploadFile = File(None),
     demo: str = Form(None),
-    professional_type: str = Form(None)
+    professional_type: str = Form(None),
+    language: str = Form(None)
 ):
     print(f"\n=================== WEB FORM INBOUND ===================")
     is_demo = str(demo).lower() in ("true", "1", "on", "yes")
@@ -350,30 +351,24 @@ async def api_incident(
             image_bytes=image_bytes,
             demo=is_demo,
             professional_type=professional_type or 'contractor',
-            dispatcher_email=dispatcher_email,      # ← ここで渡す
-            dispatcher_name=dispatcher_name         # ← 名前も渡す
+            dispatcher_email=dispatcher_email,
+            dispatcher_name=dispatcher_name,
+            language=language
         )
         
         urgency = triage_result.get("urgency", "MEDIUM")
         summary = triage_result.get("summary", "")
         print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
 
-        status_line = (
-            "We received your web request. A contractor is being paged now!"
-            if notification_sent
-            else "We received your web request and logged the details. Our team will follow up shortly."
+        from logic import get_localized_incident_copy
+        reply_msg = "\n".join(
+            get_localized_incident_copy(
+                "customer_confirmation",
+                language=language,
+                notification_sent=notification_sent,
+                summary=summary,
+            )
         )
-
-        lines = [
-            "*Thank you.*",
-            status_line,
-            "",
-            "Your request is below:",
-            "",
-            f"> {summary.strip()}"
-        ]
-
-        reply_msg = "\n".join(lines)
 
         await send_whatsapp_message(
             to=phone,
@@ -431,23 +426,15 @@ async def api_incident(
         summary = triage_result.get("summary", "")
         print(f"DEBUG: Web form AI evaluations resolved. Status level: {urgency} | Contractor notified: {notification_sent}")
 
-        
-        status_line = (
-            "We received your web request. A contractor is being paged now!"
-            if notification_sent
-            else "We received your web request and logged the details. Our team will follow up shortly."
+        from logic import get_localized_incident_copy
+        reply_msg = "\n".join(
+            get_localized_incident_copy(
+                "customer_confirmation",
+                language=language,
+                notification_sent=notification_sent,
+                summary=summary,
+            )
         )
-
-        lines = [
-            "*Thank you.*",
-            status_line,
-            "",
-            "Your request is below:",
-            "",
-            f"> {summary.strip()}"
-        ]
-
-        reply_msg = "\n".join(lines)
 
         # Send customer confirmation ONLY — this is the sole message that
         # goes to the customer's own number. The contractor's detailed dispatch
