@@ -548,7 +548,7 @@ async def retell_webhook(request: Request):
         print(f"📱 Phone: {phone} | Name: {customer_name} | Location: {location}")
         
         # Forward to /api/incident
-        form_data = {
+        json_data = {
             "phone": phone,
             "description": description,
             "location": location,
@@ -561,7 +561,7 @@ async def retell_webhook(request: Request):
         
         base_url = str(request.base_url).rstrip("/")
         async with httpx.AsyncClient() as client:
-            response = await client.post(f"{base_url}/api/incident", data=form_data, timeout=60.0)
+            response = await client.post(f"{base_url}/api/incident", json=json_data, timeout=60.0)
         
         if response.status_code == 200:
             return JSONResponse({"status": "success", "incident_response": response.json()})
