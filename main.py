@@ -191,14 +191,10 @@ async def whatsapp_webhook(request: Request):
         # Process asynchronously to ack immediately and avoid caller retries
         async def handle_incoming():
             try:
-                from logic import process_incoming_property_message, process_incoming_incident
+                from logic import process_incoming_incident
 
                 print(f"DEBUG (bg): from_jid={from_jid}")
 
-                is_prop_handled = await process_incoming_property_message(customer_phone, body_raw, wbot_url, from_jid)
-                if is_prop_handled:
-                    print("DEBUG (bg): property message handled; returning")
-                    return
 
                 # 1. Handle Commands (Filtering in WhatsApp Chat)
                 filter_keywords = ["URGENT", "NOT_URGENT", "ALL_TASKS", "EMERGENCY", "NON_EMERGENCY", "NO_EMERGENCY", "FILTER", "MID", "ALL"]
