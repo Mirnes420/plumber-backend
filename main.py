@@ -26,12 +26,11 @@ from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel, Field
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
-import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import httpx
 import re
-from fastapi import Request
+import json
 
 # 🔐 Password hashing (argon2 via passlib)
 from passlib.hash import argon2
@@ -295,6 +294,24 @@ async def line_webhook(request: Request):
 
     return JSONResponse({"status": "ok"})
 """
+
+
+
+
+# Pydantic model for JSON requests (no image support for JSON)
+class IncidentJsonPayload(BaseModel):
+    phone: str
+    description: str
+    location: Optional[str] = None
+    customer_name: Optional[str] = None
+    plumber_id: Optional[str] = None
+    demo: Optional[str] = None
+    professional_type: Optional[str] = "contractor"
+    language: Optional[str] = "en"
+
+
+
+
 # here we handle new incidents
 @app.post("/api/incident")
 async def api_incident(
