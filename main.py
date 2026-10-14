@@ -507,79 +507,63 @@ RETELL_API_KEY = os.getenv("RETELL_API_KEY")  # Set this in Render environment v
 async def retell_webhook(request: Request):
     try:
         body = await request.body()
-        print(f"[DEBUG] Raw body ({len(body)} bytes): {body[:1000] if body else 'EMPTY'}")
-        
         if not body:
             return JSONResponse({"status": "ignored", "reason": "empty body"})
-        
+
         payload = json.loads(body)
         event = payload.get("event")
         call = payload.get("call") or {}
         call_id = call.get("call_id") or payload.get("call_id")
-        
+
         print(f"📞 Event: {event} | Call ID: {call_id}")
-        
+
         if event not in ("call_analyzed", "call_ended"):
             return JSONResponse({"status": "ignored", "event": event})
-        
+
         if not call_id:
             return JSONResponse({"status": "error", "detail": "No call_id"}, status_code=400)
-        
-        # ─── FETCH FULL CALL DATA FROM RETELL API ───
-        async with httpx.AsyncClient() as client:
-            retell_response = await client.get(
-                f"https://api.retellai.com/v2/call/{call_id}",
-                headers={"Authorization": f"Bearer {RETELL_API_KEY}"},
-                timeout=30.0
-            )
-            
-        
-        if retell_response.status_code != 200:
-            print(f"[ERROR] Retell API returned {retell_response.status_code}: {retell_response.text[:500]}")
-            return JSONResponse({"status": "error", "detail": "Failed to fetch call from Retell"}, status_code=502)
-        
-        full_call = retell_response.json()
-        print(f"[DEBUG] Full call data keys: {list(full_call.keys())}")
-        
-        # Extract data from the full call object
+
+        # Fallback to the webhook body payload if HTTP fetch fails
+        full_call = call
+
+        if RETELL_API_KEY:
+            try:
+                async with httpx.AsyncClient() as client:
+                    retell_response = await client.get(
+                        f"https://api.retellai.com/v2/get-call/{call_id}",
+                        headers={"Authorization": f"Bearer {RETELL_API_KEY}"},
+                        timeout=10.0
+                    )
+                    if retell_response.status_code == 200:
+                        full_call = retell_response.json()
+            except Exception as http_err:
+                print(f"[WARNING] Could not fetch call from Retell API, using webhook payload: {http_err}")
+
+        # Extract data from call object
         phone = full_call.get("from_number") or full_call.get("caller_number") or ""
         transcript = full_call.get("transcript") or ""
         summary = full_call.get("call_summary") or full_call.get("summary") or ""
         description = summary if summary else transcript
         if not description:
             description = "Incident reported via voice call."
-        
-        # Try to get extracted variables from Retell's tool results if available
-        customer_name = ""
-        location = ""
-        professional_type = "contractor"
-        
-        # Retell sometimes stores extracted variables in call_object or retell_llm_dynamic_variables
+
         dynamic_vars = full_call.get("retell_llm_dynamic_variables") or {}
-        if dynamic_vars:
-            customer_name = dynamic_vars.get("customer_name") or ""
-            location = dynamic_vars.get("location") or ""
-            professional_type = dynamic_vars.get("professional_type") or "contractor"
-            print(f"[DEBUG] Dynamic vars found: {dynamic_vars}")
-        
-        # Fallback: regex from transcript
+        customer_name = dynamic_vars.get("customer_name") or ""
+        location = dynamic_vars.get("location") or ""
+        professional_type = dynamic_vars.get("professional_type") or "contractor"
+
         if transcript and not customer_name:
             import re
             name_match = re.search(r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", transcript, re.IGNORECASE)
             if name_match:
                 customer_name = name_match.group(1)
-        
+
         if transcript and not location:
             import re
             loc_match = re.search(r"(?:in|at)\s+([A-Z][a-zA-Z\s,]+)", transcript, re.IGNORECASE)
             if loc_match:
-                location = loc_match.group(1).strip()
-                location = re.split(r'[.!?;]', location)[0].strip()
-        
-        print(f"📱 Phone: {phone} | Name: {customer_name} | Location: {location}")
+                location = re.split(r'[.!?;]', loc_match.group(1).strip())[0].strip()
 
-        
-        # Forward to /api/incident
         json_data = {
             "phone": phone,
             "description": description,
@@ -591,22 +575,19 @@ async def retell_webhook(request: Request):
             "demo": "false",
         }
 
-        print(f"JSON data of type {type(json_data)}: {json_data}")
-        
         base_url = str(request.base_url).rstrip("/")
         async with httpx.AsyncClient() as client:
             response = await client.post(f"{base_url}/api/incident", json=json_data, timeout=60.0)
-        
+
         if response.status_code == 200:
             return JSONResponse({"status": "success", "incident_response": response.json()})
         else:
-            return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=502)
-            
+            return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=200)
+
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-
+        return JSONResponse({"status": "error", "detail": str(e)}, status_code=200)
 
 
 
