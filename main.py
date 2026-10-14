@@ -319,16 +319,27 @@ async def api_incident(request: Request):
     content_type = raw_ct.lower()
     print(f"[DEBUG] Content-Type raw: '{raw_ct}'")
 
-    phone = None
-    description = None
-    location = None
-    customer_name = None
-    plumber_id = ""
-    demo = None
-    professional_type = "contractor"
-    language = "en"
-    image_bytes = None
-    is_demo = False
+    phone = data.get("phone")
+    description = data.get("description")
+    location = data.get("location")
+    customer_name = data.get("customer_name")
+    plumber_id = data.get("plumber_id") or ""
+    demo = data.get("demo")
+    professional_type = data.get("professional_type") or "contractor"
+    language = data.get("language") or "en"
+
+    # ─── Fallback: Extract phone from location or description if missing ───
+    if not phone and location:
+        import re
+        phone_match = re.search(r"(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4}|\d{7,10})", location)
+        if phone_match:
+            phone = phone_match.group(0)
+
+    if not phone and description:
+        import re
+        phone_match = re.search(r"(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4}|\d{7,10})", description)
+        if phone_match:
+            phone = phone_match.group(0)
 
     # ─── JSON branch ───
     if "application/json" in content_type:
