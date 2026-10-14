@@ -310,8 +310,6 @@ class IncidentJsonPayload(BaseModel):
     language: Optional[str] = "en"
 
 
-
-
 # here we handle new incidents
 @app.post("/api/incident")
 async def api_incident(request: Request):
@@ -530,10 +528,11 @@ async def retell_webhook(request: Request):
         # ─── FETCH FULL CALL DATA FROM RETELL API ───
         async with httpx.AsyncClient() as client:
             retell_response = await client.get(
-                f"https://api.retellai.com/v1/call/{call_id}",
+                f"https://api.retellai.com/v2/call/{call_id}",
                 headers={"Authorization": f"Bearer {RETELL_API_KEY}"},
                 timeout=30.0
             )
+            
         
         if retell_response.status_code != 200:
             print(f"[ERROR] Retell API returned {retell_response.status_code}: {retell_response.text[:500]}")
