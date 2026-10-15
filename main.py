@@ -319,14 +319,15 @@ async def api_incident(request: Request):
     content_type = raw_ct.lower()
     print(f"[DEBUG] Content-Type raw: '{raw_ct}'")
 
-    phone = data.get("phone")
-    description = data.get("description")
-    location = data.get("location")
-    customer_name = data.get("customer_name")
-    plumber_id = data.get("plumber_id") or ""
-    demo = data.get("demo")
-    professional_type = data.get("professional_type") or "contractor"
-    language = data.get("language") or "en"
+    data = {}
+    phone = None
+    description = None
+    location = None
+    customer_name = None
+    plumber_id = ""
+    demo = None
+    professional_type = "contractor"
+    language = "en"
 
     # ─── Fallback: Extract phone from location or description if missing ───
     if not phone and location:
