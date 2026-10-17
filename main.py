@@ -524,12 +524,53 @@ async def retell_webhook(request: Request):
             return JSONResponse({"status": "ignored", "reason": "empty body"})
 
         payload = json.loads(body)
+        print(f"[RETELL] Raw payload keys: {list(payload.keys())}")
+
         event = payload.get("event")
         call = payload.get("call") or {}
         call_id = call.get("call_id") or payload.get("call_id")
 
-        print(f"📞 Event: {event} | Call ID: {call_id}")
+        print(f"📞 Event: {event!r} | Call ID: {call_id!r}")
 
+        # ── Fast path: Retell custom post-call webhook ────────────────────────
+        # Retell fires a *separate* POST with the AI-extracted structured fields
+        # directly at the top level (no "event" key, no "call" wrapper).
+        # Detect this by checking for our domain-specific keys and forward
+        # immediately — before any event-gating logic.
+        has_direct_fields = bool(payload.get("phone") and payload.get("description"))
+        if has_direct_fields:
+            phone         = str(payload.get("phone") or "")
+            description   = str(payload.get("description") or "")
+            location      = str(payload.get("location") or "")
+            customer_name = str(payload.get("customer_name") or "")
+            plumber_id    = str(payload.get("plumber_id") or "")
+            professional_type = str(payload.get("professional_type") or "contractor")
+            language      = str(payload.get("language") or "en")
+            demo          = str(payload.get("demo") or "false").lower()
+
+            print(f"[RETELL] Direct payload → phone={phone!r} | name={customer_name!r} | location={location!r} | type={professional_type} | demo={demo}")
+
+            json_data = {
+                "phone": phone,
+                "description": description,
+                "location": location,
+                "customer_name": customer_name,
+                "plumber_id": plumber_id,
+                "professional_type": professional_type,
+                "language": language,
+                "demo": demo,
+            }
+            base_url = str(request.base_url).rstrip("/")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(f"{base_url}/api/incident", json=json_data, timeout=60.0)
+
+            if response.status_code == 200:
+                return JSONResponse({"status": "success", "incident_response": response.json()})
+            else:
+                print(f"[RETELL] /api/incident returned {response.status_code}: {response.text[:500]}")
+                return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=200)
+
+        # ── Standard Retell call_ended / call_analyzed flow ───────────────────
         if event not in ("call_analyzed", "call_ended"):
             return JSONResponse({"status": "ignored", "event": event})
 
@@ -549,13 +590,13 @@ async def retell_webhook(request: Request):
                     )
                     if retell_response.status_code == 200:
                         full_call = retell_response.json()
+                        print(f"[RETELL] Fetched full call from API OK")
+                    else:
+                        print(f"[RETELL] Retell API returned {retell_response.status_code}, using webhook payload")
             except Exception as http_err:
                 print(f"[WARNING] Could not fetch call from Retell API, using webhook payload: {http_err}")
 
-        # ── 1. Top-level webhook body (highest priority) ──────────────────────
-        # When Retell fires a post-call webhook with custom analysis it often
-        # places the structured fields directly at the top level of the payload
-        # (the same object that also contains "event" and "call").
+        # ── 1. Top-level payload fields ───────────────────────────────────────
         phone         = payload.get("phone") or ""
         description   = payload.get("description") or ""
         location      = payload.get("location") or ""
@@ -565,7 +606,7 @@ async def retell_webhook(request: Request):
         language      = payload.get("language") or "en"
         demo          = str(payload.get("demo") or "false").lower()
 
-        # ── 2. Retell post-call analysis object (secondary) ───────────────────
+        # ── 2. call_analysis object ───────────────────────────────────────────
         call_analysis = full_call.get("call_analysis") or {}
         if not phone:          phone          = call_analysis.get("phone") or ""
         if not description:    description    = (call_analysis.get("description")
@@ -576,11 +617,11 @@ async def retell_webhook(request: Request):
         if professional_type == "contractor":
             professional_type = call_analysis.get("professional_type") or "contractor"
 
-        # Also check from_number for phone as a last structured fallback
+        # ── 3. from_number fallback ───────────────────────────────────────────
         if not phone:
             phone = full_call.get("from_number") or full_call.get("caller_number") or ""
 
-        # ── 3. Retell LLM dynamic variables (tertiary) ────────────────────────
+        # ── 4. LLM dynamic variables ──────────────────────────────────────────
         dynamic_vars = full_call.get("retell_llm_dynamic_variables") or {}
         if not phone:          phone          = dynamic_vars.get("phone") or ""
         if not description:    description    = dynamic_vars.get("description") or ""
@@ -590,24 +631,20 @@ async def retell_webhook(request: Request):
         if professional_type == "contractor":
             professional_type = dynamic_vars.get("professional_type") or "contractor"
 
-        # ── 3. Transcript fallbacks (last resort) ────────────────────────────
+        # ── 5. Transcript regex (last resort) ─────────────────────────────────
         transcript = full_call.get("transcript") or ""
-
         if not description:
             description = transcript if transcript else "Incident reported via voice call."
-
         if transcript and not customer_name:
             import re
             name_match = re.search(r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", transcript, re.IGNORECASE)
             if name_match:
                 customer_name = name_match.group(1)
-
         if transcript and not phone:
             import re
             phone_match = re.search(r"(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{7,10})", transcript)
             if phone_match:
                 phone = re.sub(r"[\s.\-]", "", phone_match.group(0))
-
         if transcript and not location:
             import re
             loc_match = re.search(r"(?:in|at)\s+([A-Z][a-zA-Z\s,]+)", transcript, re.IGNORECASE)
@@ -634,6 +671,7 @@ async def retell_webhook(request: Request):
         if response.status_code == 200:
             return JSONResponse({"status": "success", "incident_response": response.json()})
         else:
+            print(f"[RETELL] /api/incident returned {response.status_code}: {response.text[:500]}")
             return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=200)
 
     except Exception as e:
