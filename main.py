@@ -328,6 +328,7 @@ async def api_incident(request: Request):
     demo = None
     professional_type = "contractor"
     language = "en"
+    image_bytes = None  # always defined; populated only when a file upload is present
 
     # ─── Fallback: Extract phone from location or description if missing ───
     if not phone and location:
@@ -551,18 +552,49 @@ async def retell_webhook(request: Request):
             except Exception as http_err:
                 print(f"[WARNING] Could not fetch call from Retell API, using webhook payload: {http_err}")
 
-        # Extract data from call object
-        phone = full_call.get("from_number") or full_call.get("caller_number") or ""
-        transcript = full_call.get("transcript") or ""
-        summary = full_call.get("call_summary") or full_call.get("summary") or ""
-        description = summary if summary else transcript
-        if not description:
-            description = "Incident reported via voice call."
+        # ── 1. Top-level webhook body (highest priority) ──────────────────────
+        # When Retell fires a post-call webhook with custom analysis it often
+        # places the structured fields directly at the top level of the payload
+        # (the same object that also contains "event" and "call").
+        phone         = payload.get("phone") or ""
+        description   = payload.get("description") or ""
+        location      = payload.get("location") or ""
+        customer_name = payload.get("customer_name") or ""
+        plumber_id    = str(payload.get("plumber_id") or "")
+        professional_type = payload.get("professional_type") or "contractor"
+        language      = payload.get("language") or "en"
+        demo          = str(payload.get("demo") or "false").lower()
 
+        # ── 2. Retell post-call analysis object (secondary) ───────────────────
+        call_analysis = full_call.get("call_analysis") or {}
+        if not phone:          phone          = call_analysis.get("phone") or ""
+        if not description:    description    = (call_analysis.get("description")
+                                                 or call_analysis.get("summary") or "")
+        if not location:       location       = call_analysis.get("location") or ""
+        if not customer_name:  customer_name  = call_analysis.get("customer_name") or ""
+        if not plumber_id:     plumber_id     = str(call_analysis.get("plumber_id") or "")
+        if professional_type == "contractor":
+            professional_type = call_analysis.get("professional_type") or "contractor"
+
+        # Also check from_number for phone as a last structured fallback
+        if not phone:
+            phone = full_call.get("from_number") or full_call.get("caller_number") or ""
+
+        # ── 3. Retell LLM dynamic variables (tertiary) ────────────────────────
         dynamic_vars = full_call.get("retell_llm_dynamic_variables") or {}
-        customer_name = dynamic_vars.get("customer_name") or ""
-        location = dynamic_vars.get("location") or ""
-        professional_type = dynamic_vars.get("professional_type") or "contractor"
+        if not phone:          phone          = dynamic_vars.get("phone") or ""
+        if not description:    description    = dynamic_vars.get("description") or ""
+        if not location:       location       = dynamic_vars.get("location") or ""
+        if not customer_name:  customer_name  = dynamic_vars.get("customer_name") or ""
+        if not plumber_id:     plumber_id     = str(dynamic_vars.get("plumber_id") or "")
+        if professional_type == "contractor":
+            professional_type = dynamic_vars.get("professional_type") or "contractor"
+
+        # ── 3. Transcript fallbacks (last resort) ────────────────────────────
+        transcript = full_call.get("transcript") or ""
+
+        if not description:
+            description = transcript if transcript else "Incident reported via voice call."
 
         if transcript and not customer_name:
             import re
@@ -570,21 +602,29 @@ async def retell_webhook(request: Request):
             if name_match:
                 customer_name = name_match.group(1)
 
+        if transcript and not phone:
+            import re
+            phone_match = re.search(r"(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{7,10})", transcript)
+            if phone_match:
+                phone = re.sub(r"[\s.\-]", "", phone_match.group(0))
+
         if transcript and not location:
             import re
             loc_match = re.search(r"(?:in|at)\s+([A-Z][a-zA-Z\s,]+)", transcript, re.IGNORECASE)
             if loc_match:
                 location = re.split(r'[.!?;]', loc_match.group(1).strip())[0].strip()
 
+        print(f"[RETELL] phone={phone!r} | name={customer_name!r} | location={location!r} | type={professional_type} | demo={demo}")
+
         json_data = {
             "phone": phone,
             "description": description,
             "location": location,
             "customer_name": customer_name,
-            "plumber_id": "",
+            "plumber_id": plumber_id,
             "professional_type": professional_type,
-            "language": "en",
-            "demo": "false",
+            "language": language,
+            "demo": demo,
         }
 
         base_url = str(request.base_url).rstrip("/")
