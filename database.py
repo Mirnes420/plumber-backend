@@ -61,88 +61,77 @@ class WhatsAppAuth(Base):
     key = Column(String, primary_key=True)
     value = Column(Text)
 
+# ── Subscription / Usage Tracking ──────────────────────────────────────────────
+class Subscription(Base):
+    """Tracks per-contractor plan tier, minute usage, and billing cycle."""
+    __tablename__ = "subscriptions"
 
-class PropertyLead(Base):
-    __tablename__ = "property_leads"
-
-    id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
-    customer_phone = Column(String, nullable=False)
-    customer_name = Column(String)
-    property_id = Column(String, nullable=False)
-    budget = Column(String)
-    timeline = Column(String)
-    language = Column(String)
-    marketer_phone = Column(String, nullable=False)
-    status = Column(String, default="new")
-    raw_message = Column(Text)
-    notification_sent = Column(Boolean, default=False)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-
-
-class PropertyManager(Base):
-    __tablename__ = "property_managers"
-
-    id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
-    name = Column(String, nullable=False)
-    phone = Column(String, nullable=False, unique=True)
-    email = Column(String)
-
-
-class Property(Base):
-    __tablename__ = "properties"
-
-    id = Column(String, primary_key=True)
-    manager_id = Column(String)
-    title = Column(String, nullable=False)
-    address = Column(String, nullable=True)
-    price = Column(String)
-    # Make title/address optional to match flexible input requirements
-    # (some callers only provide URL + optional price)
-    description = Column(Text)
-    budget_range = Column(String)
-    image_url = Column(String)
-    pdf_url = Column(String)
-
-
-class PropertyChatState(Base):
-    __tablename__ = "property_chat_states"
-
-    phone = Column(String, primary_key=True)
-    current_property_id = Column(String)
-    state = Column(String, default="awaiting_viewing")
-    viewing_answer = Column(Text, nullable=True)   # stores buyer's viewing availability reply
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-class PropertyLink(Base):
-    __tablename__ = "property_links"
-
-    id = Column(String, primary_key=True, server_default=func.gen_random_uuid())
-    property_id = Column(String, nullable=False)
-    url = Column(Text, nullable=False)
-    source_tag = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-from sqlalchemy.dialects.postgresql import JSONB
-
-class Lead(Base):
-    __tablename__ = "leads"
-
-    id = Column(Integer, primary_key=True) # SERIAL in Node.js
-    phone = Column(String)
-    property_code = Column(String)
-    source = Column(String)
-    availability = Column(String)
-    payment = Column(String)
-    status = Column(String)
-    metadata_ = Column("metadata", JSONB)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    last_notified_at = Column(DateTime(timezone=True), nullable=True)
-
-
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    plumber_id = Column(String, nullable=False, unique=True, index=True)
+    plan_tier = Column(String, nullable=False, default="starter")  # starter | pro | business
+    used_seconds = Column(Integer, nullable=False, default=0)
+    whop_member_id = Column(String, nullable=True)
+    whop_payment_method_id = Column(String, nullable=True)
+    cycle_start_date = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 Base.metadata.create_all(bind=engine)
+
+
+# ── Usage Helpers ───────────────────────────────────────────────────────────────
+
+def increment_usage_seconds(plumber_id: str, seconds: int) -> bool:
+    """Atomically adds *seconds* to the subscription row for *plumber_id*."""
+    db = SessionLocal()
+    try:
+        sub = db.query(Subscription).filter(Subscription.plumber_id == plumber_id).first()
+        if sub is None:
+            # Auto-create a starter subscription row so tracking never silently drops
+            sub = Subscription(plumber_id=plumber_id, plan_tier="starter")
+            db.add(sub)
+            db.flush()
+        sub.used_seconds = Subscription.used_seconds + seconds  # type: ignore[assignment]
+        db.commit()
+        return True
+    except Exception as e:
+        print(f"[USAGE] increment_usage_seconds error for {plumber_id}: {e}")
+        db.rollback()
+        return False
+    finally:
+        db.close()
+
+
+def get_subscriptions_due_for_billing():
+    """Returns all Subscription rows whose billing cycle has passed 30 days."""
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        return (
+            db.query(Subscription)
+            .filter(Subscription.cycle_start_date <= cutoff)
+            .all()
+        )
+    except Exception as e:
+        print(f"[BILLING] Error fetching subscriptions due: {e}")
+        return []
+    finally:
+        db.close()
+
+
+def reset_subscription_cycle(subscription_id: int):
+    """Zeroes out used_seconds and advances cycle_start_date to now."""
+    db = SessionLocal()
+    try:
+        sub = db.query(Subscription).filter(Subscription.id == subscription_id).first()
+        if sub:
+            sub.used_seconds = 0
+            sub.cycle_start_date = datetime.now(timezone.utc)
+            db.commit()
+    except Exception as e:
+        print(f"[BILLING] Error resetting cycle for id={subscription_id}: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 
 # --- SEED DEFAULT CONTRACTORS ---
@@ -261,90 +250,5 @@ def get_contractor_by_id(contractor_id: str):
     except Exception as e:
         print(f"Error fetching contractor {contractor_id}: {e}")
         return None
-    finally:
-        db.close()
-
-
-# --- PROPERTY LEAD FUNCTIONS ---
-
-def log_property_lead(
-    customer_phone: str,
-    customer_name: str,
-    property_id: str,
-    budget: str,
-    timeline: str,
-    marketer_phone: str,
-    language: str = None,
-    raw_message: str = None,
-    notification_sent: bool = False
-):
-    """Logs a property lead using SQLAlchemy."""
-    db = SessionLocal()
-    try:
-        new_lead = PropertyLead(
-            customer_phone=customer_phone,
-            customer_name=customer_name,
-            property_id=property_id,
-            budget=budget,
-            timeline=timeline,
-            language=language,
-            marketer_phone=marketer_phone,
-            raw_message=raw_message,
-            notification_sent=notification_sent
-        )
-        db.add(new_lead)
-        db.commit()
-        db.refresh(new_lead)
-        return new_lead
-    except Exception as e:
-        print(f"Error logging property lead: {e}")
-        db.rollback()
-        return None
-    finally:
-        db.close()
-
-
-def get_property_leads():
-    """Fetches all property leads using SQLAlchemy."""
-    db = SessionLocal()
-    try:
-        leads = db.query(PropertyLead).order_by(PropertyLead.timestamp.desc()).all()
-        return [
-            {
-                "id": l.id,
-                "customer_phone": l.customer_phone,
-                "customer_name": l.customer_name,
-                "property_id": l.property_id,
-                "budget": l.budget,
-                "timeline": l.timeline,
-                "language": l.language,
-                "marketer_phone": l.marketer_phone,
-                "status": l.status,
-                "notification_sent": l.notification_sent,
-                "timestamp": l.timestamp
-            }
-            for l in leads
-        ]
-    except Exception as e:
-        print(f"Error fetching property leads: {e}")
-        return []
-    finally:
-        db.close()
-
-
-def update_property_lead_status(lead_id: str, status: str):
-    """Updates a property lead's status using SQLAlchemy."""
-    db = SessionLocal()
-    try:
-        lead = db.query(PropertyLead).filter(PropertyLead.id == lead_id).first()
-        if lead:
-            lead.status = status
-            db.commit()
-            return True
-        return False
-    except Exception as e:
-        print(f"Error updating lead status: {e}")
-        db.rollback()
-        return False
     finally:
         db.close()

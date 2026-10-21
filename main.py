@@ -1,7 +1,24 @@
+# ----------------------- IMPORTS ----------------------- #
+from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPException, Body
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from logic import send_whatsapp_message, process_incoming_incident
+from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime, timedelta, timezone
+from fastapi.responses import JSONResponse
+from psycopg2.extras import RealDictCursor
+from pydantic import BaseModel, Field
+from typing import List, Optional
+from passlib.hash import argon2
+from dotenv import load_dotenv
+import jwt as pyjwt
+import traceback
+import psycopg2
+import asyncio
+import httpx
+import json
+import re
 import os
 import sys
-import traceback
-
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
     if hasattr(sys.stdout, "reconfigure"):
@@ -15,27 +32,9 @@ if sys.platform.startswith("win"):
         except Exception:
             pass
 
-from fastapi import FastAPI, Request, Form, UploadFile, File, Depends, HTTPException, Body
-from fastapi.responses import JSONResponse
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from dotenv import load_dotenv
-from logic import send_whatsapp_message, process_incoming_incident
-import jwt as pyjwt
-import asyncio
-from datetime import datetime, timedelta, timezone
-from pydantic import BaseModel, Field
-from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
-import psycopg2
-from psycopg2.extras import RealDictCursor
-import httpx
-import re
-import json
 
-# 🔐 Password hashing (argon2 via passlib)
-from passlib.hash import argon2
 
-# load our local environment from .env
+# ----------------------- CONFIG ----------------------- #
 load_dotenv()
 
 app = FastAPI(title="Coherzo")
@@ -63,9 +62,23 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
+RETELL_API_KEY = os.getenv("RETELL_API_KEY") 
 
 
 
+# -------------------- PYDANTIC MODELS ----------------------
+class IncidentJsonPayload(BaseModel):
+    phone: str
+    description: str
+    location: Optional[str] = None
+    customer_name: Optional[str] = None
+    plumber_id: Optional[str] = None
+    demo: Optional[str] = None
+    professional_type: Optional[str] = "contractor"
+    language: Optional[str] = "en"
+
+
+# ----------------------- DATABASE ----------------------- #
 def get_db_connection():
     db_url = os.environ.get("DATABASE_URL")
     if not db_url:
@@ -95,6 +108,8 @@ def pqc_verify_password(password: str, stored_hash: str) -> bool:
     except Exception:
         return False
 
+
+# ----------------------- ENDPOINTS ----------------------- #
 # health check 
 @app.get("/")
 async def root():
@@ -252,62 +267,6 @@ async def whatsapp_webhook(request: Request):
         print("".join(traceback.format_exception(type(global_err), global_err, global_err.__traceback__)))
         sys.stdout.flush() # Force log buffer write immediately into Render's stream
         return JSONResponse({"status": "internal_error", "detail": str(global_err)}, status_code=500)
-
-"""
-we will need something like this for line integration
-
-from fastapi import Request
-from fastapi.responses import JSONResponse
-import httpx
-import os
-
-LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
-
-@app.post("/line/webhook")
-async def line_webhook(request: Request):
-    body = await request.json()
-    print("LINE webhook event:", body)
-
-    # LINE sends events in an array under "events"
-    for event in body.get("events", []):
-        if event.get("type") == "message":
-            user_id = event["source"]["userId"]
-            text = event["message"].get("text", "")
-
-            # Example: echo back the message
-            reply_token = event["replyToken"]
-            reply_payload = {
-                "replyToken": reply_token,
-                "messages": [{"type": "text", "text": f"You said: {text}"}]
-            }
-
-            headers = {
-                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-                "Content-Type": "application/json"
-            }
-            async with httpx.AsyncClient() as client:
-                await client.post(
-                    "https://api.line.me/v2/bot/message/reply",
-                    headers=headers,
-                    json=reply_payload
-                )
-
-    return JSONResponse({"status": "ok"})
-"""
-
-
-
-
-# Pydantic model for JSON requests (no image support for JSON)
-class IncidentJsonPayload(BaseModel):
-    phone: str
-    description: str
-    location: Optional[str] = None
-    customer_name: Optional[str] = None
-    plumber_id: Optional[str] = None
-    demo: Optional[str] = None
-    professional_type: Optional[str] = "contractor"
-    language: Optional[str] = "en"
 
 
 # here we handle new incidents
@@ -511,10 +470,25 @@ async def api_incident(request: Request):
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
 
 
-# retell endpoint
+# ----------------------- RETELL ----------------------- #
 
+# ── Track Retell Call Duration for Usage Overage ──────────────────────────────
+def extract_and_track_duration(full_call_data: dict, plumber_id: str):
+    # Retell gives start_timestamp and end_timestamp in ms, or duration_ms directly
+    start_ts = full_call_data.get("start_timestamp")
+    end_ts = full_call_data.get("end_timestamp")
+    duration_ms = full_call_data.get("duration_ms")
 
-RETELL_API_KEY = os.getenv("RETELL_API_KEY")  # Set this in Render environment variables
+    if not duration_ms and (start_ts and end_ts):
+        duration_ms = end_ts - start_ts
+
+    if duration_ms and plumber_id:
+        duration_seconds = int(duration_ms / 1000)
+        
+        # Async/Sync DB call to increment used seconds for this contractor/plumber
+        # e.g., using Supabase / PostgreSQL:
+        # db.rpc('increment_usage_seconds', {'p_id': plumber_id, 'sec': duration_seconds})
+        print(f"[USAGE] Logged {duration_seconds}s for plumber_id={plumber_id}")
 
 @app.post("/retell-webhook")
 async def retell_webhook(request: Request):
@@ -577,7 +551,15 @@ async def retell_webhook(request: Request):
         if not call_id:
             return JSONResponse({"status": "error", "detail": "No call_id"}, status_code=400)
 
-        # Fallback to the webhook body payload if HTTP fetch fails
+
+        # ── Standard Retell call_ended / call_analyzed flow ───────────────────
+        if event not in ("call_analyzed", "call_ended"):
+            return JSONResponse({"status": "ignored", "event": event})
+
+        if not call_id:
+            return JSONResponse({"status": "error", "detail": "No call_id"}, status_code=400)
+
+
         full_call = call
 
         if RETELL_API_KEY:
@@ -664,6 +646,9 @@ async def retell_webhook(request: Request):
             "demo": demo,
         }
 
+        
+        extract_and_track_duration(full_call, plumber_id)
+
         base_url = str(request.base_url).rstrip("/")
         async with httpx.AsyncClient() as client:
             response = await client.post(f"{base_url}/api/incident", json=json_data, timeout=60.0)
@@ -679,48 +664,6 @@ async def retell_webhook(request: Request):
         traceback.print_exc()
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=200)
 
-
-
-# --- QR SCAN & PROPERTY INQUIRY ENDPOINT ---
-class PropertyInquiryRequest(BaseModel):
-    customer_phone: str
-    customer_name: str
-    property_id: str
-    budget: str
-    timeline: str
-    marketer_phone: str = None  # Optional override, defaults to system marketer
-
-
-
-@app.post("/api/property-inquiry")
-async def api_property_inquiry(payload: PropertyInquiryRequest = Body(...)):
-    """
-    Endpoint triggered when a user scans a property QR code, passes hardcoded
-    qualification steps, and submits their budget/timeline.
-    """
-    print(f"\n=================== QR PROPERTY INQUIRY ===================")
-    print(f"🏠 Property: {payload.property_id} | Client: {payload.customer_name} ({payload.customer_phone})")
-    
-    try:
-        from logic import process_property_lead
-        
-        result = await process_property_lead(
-            customer_phone=payload.customer_phone,
-            customer_name=payload.customer_name,
-            property_id=payload.property_id,
-            budget=payload.budget,
-            timeline=payload.timeline,
-            marketer_phone=payload.marketer_phone
-        )
-        
-        return JSONResponse({
-            "status": "success",
-            "message": "Inquiry processed and marketer notified via WhatsApp.",
-            "lead_summary": result.get("lead_summary")
-        })
-    except Exception as err:
-        print(f"❌ PROPERTY INQUIRY ERROR: {err}")
-        return JSONResponse({"status": "error", "detail": str(err)}, status_code=500)
 
 
 if __name__ == "__main__":
@@ -932,476 +875,47 @@ async def admin_incidents(request: Request,
         db.close()
 
 
-@app.patch("/admin/incident-status")
-async def admin_update_status(body: AdminStatusRequest, request: Request):
-    """Update incident status (PENDING / RESOLVED)."""
-    await _get_current_admin(request)  # auth check
-    if body.status not in ("PENDING", "RESOLVED"):
-        raise HTTPException(status_code=400, detail="status must be PENDING or RESOLVED")
-    from database import SessionLocal, Incident
-    db = SessionLocal()
-    try:
-        incident = db.query(Incident).filter(Incident.id == body.id).first()
-        if not incident:
-            raise HTTPException(status_code=404, detail="Incident not found")
-        incident.status = body.status
-        db.commit()
-        return {"success": True}
-    finally:
-        db.close()
 
+# --------- FUTURE --------------#
+# ----------------------- LINE (local messaging) ----------------------- #
+"""
+we will need something like this for line integration
 
-# PROPERTIES ======================================================================================================== # 
-
-# --- IMPORTS ---
-import base64
-import os
-import shutil
-import uuid
-import json
-from fastapi import Request, UploadFile, HTTPException, status
-from fastapi.exceptions import RequestValidationError
+from fastapi import Request
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import httpx
+import os
 
-# --- SCHEMAS ---
-class PropertyManagerCreate(BaseModel):
-    name: str
-    phone: str
-    email: Optional[str] = None
-class PropertyManagerResponse(BaseModel):
-    id: str
-    name: str
-    phone: str
-    email: Optional[str]
-class PropertyCreate(BaseModel):
-    id: str = Field(..., description="Unique Property ID (e.g. ATH-39)")
-    manager_id: str
-    title: str
-    budget_range: Optional[str] = None
-    pdf_url: Optional[str] = None
-class PropertyResponse(BaseModel):
-    id: str
-    manager_id: Optional[str]
-    title: str
-    budget_range: Optional[str]
-    pdf_url: Optional[str]
-    portal_links: Optional[List[dict]] = []
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
 
+@app.post("/line/webhook")
+async def line_webhook(request: Request):
+    body = await request.json()
+    print("LINE webhook event:", body)
 
-# --- PROPERTY MANAGER ENDPOINTS ---
-@app.post("/api/property-managers", response_model=PropertyManagerResponse)
-async def create_property_manager(payload: PropertyManagerCreate):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO property_managers (name, phone, email)
-                VALUES (%s, %s, %s)
-                RETURNING id, name, phone, email
-                """,
-                (payload.name, payload.phone, payload.email)
-            )
-            manager = cur.fetchone()
-            conn.commit()
-            return manager
-    except psycopg2.IntegrityError:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail="A property manager with this phone number already exists.")
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
+    # LINE sends events in an array under "events"
+    for event in body.get("events", []):
+        if event.get("type") == "message":
+            user_id = event["source"]["userId"]
+            text = event["message"].get("text", "")
 
-@app.get("/api/property-managers", response_model=List[PropertyManagerResponse])
-async def list_property_managers():
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id, name, phone, email FROM property_managers ORDER BY name ASC")
-            return cur.fetchall()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
+            # Example: echo back the message
+            reply_token = event["replyToken"]
+            reply_payload = {
+                "replyToken": reply_token,
+                "messages": [{"type": "text", "text": f"You said: {text}"}]
+            }
 
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request, exc):
-    """
-    Catches Pydantic validation errors and safely serializes them.
-    Replaces raw bytes (which crash jsonable_encoder) with a safe placeholder.
-    """
-    safe_errors = []
-    for error in exc.errors():
-        err = dict(error)
-        # The 'input' key holds the raw value that failed validation.
-        # If a client sent a file where a string was expected, this is bytes.
-        if "input" in err and isinstance(err["input"], bytes):
-            err["input"] = f"<binary data: {len(err['input'])} bytes>"
-        safe_errors.append(err)
-
-    return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": safe_errors},
-    )
-
-
-def save_upload_file(upload_file: UploadFile, destination: str) -> str:
-    """Persist an uploaded file to disk and close the handle."""
-    try:
-        with open(destination, "wb") as buffer:
-            shutil.copyfileobj(upload_file.file, buffer)
-    finally:
-        upload_file.file.close()
-    return destination
-
-# --- PROPERTY ENDPOINTS ---
-@app.post("/api/properties", response_model=PropertyResponse)
-async def create_property(request: Request):
-    content_type = request.headers.get("content-type", "")
-    
-    # Configure where files are stored (use env var or adjust as needed)
-    upload_dir = os.environ.get("UPLOAD_DIR", "/tmp/uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-
-    # Variables to collect
-    prop_id = manager_id = title = address = None
-    description = budget_range = image_url = pdf_url = None
-
-    # ------------------------------------------------------------------
-    # A) JSON mode: client sends PropertyCreate as JSON with URL strings
-    # ------------------------------------------------------------------
-    if "application/json" in content_type:
-        try:
-            body = await request.json()
-        except json.JSONDecodeError:
-            raise HTTPException(status_code=400, detail="Invalid JSON body")
-
-        # Reuse your existing Pydantic rules for JSON payloads
-        try:
-            payload = PropertyCreate(**body)
-        except ValidationError as e:
-            raise HTTPException(status_code=422, detail=e.errors())
-
-        prop_id       = payload.id
-        manager_id    = payload.manager_id
-        title         = payload.title
-        budget_range  = payload.budget_range
-        pdf_url       = payload.pdf_url
-
-    # ------------------------------------------------------------------
-    # B) Multipart mode: client sends form fields + optional file uploads
-    # ------------------------------------------------------------------
-    elif "multipart/form-data" in content_type:
-        form = await request.form()
-
-        prop_id      = form.get("id")
-        manager_id   = form.get("manager_id")
-        title        = form.get("title")
-        description  = form.get("description") or None
-        budget_range = form.get("budget_range") or None
-
-        # Grab files and strings completely separately
-        pdf_file = form.get("pdf_file")
-        pdf_url_str = form.get("pdf_url")
-
-
-        # --- PDF ---
-        if hasattr(pdf_file, "filename") and pdf_file.filename:
-            ext = os.path.splitext(pdf_file.filename)[1]
-            pdf_name = f"{uuid.uuid4()}{ext}"
-            pdf_path = os.path.join(upload_dir, pdf_name)
-            save_upload_file(pdf_file, pdf_path)
-            pdf_url = f"/uploads/{pdf_name}"
-        elif isinstance(pdf_url_str, str) and pdf_url_str.strip():
-            pdf_url = pdf_url_str
-        else:
-            pdf_url = None
-
-        # Dynamic PDF brochure builder fallback (Requirement 0)
-        if not pdf_url:
-            compiled_pdf = build_property_pdf(
-                property_id=prop_id,
-                title=title,
-                address=address,
-                description=description or "",
-                budget_range=budget_range or "",
-                image_url=image_url
-            )
-            if compiled_pdf:
-                pdf_url = compiled_pdf
-    else:
-        raise HTTPException(status_code=415, detail="Unsupported Media Type")
-
-    # ------------------------------------------------------------------
-    # Database insert (same logic as before)
-    # ------------------------------------------------------------------
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO properties (
-                    id, manager_id, title, budget_range, pdf_url
+            headers = {
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    "https://api.line.me/v2/bot/message/reply",
+                    headers=headers,
+                    json=reply_payload
                 )
-                VALUES (%s, %s::uuid, %s, %s, %s)
-                RETURNING id, manager_id, title, budget_range, pdf_url
-                """,
-                (
-                    str(prop_id).upper().strip(),
-                    manager_id,
-                    title,
-                    budget_range,
-                    pdf_url,
-                ),
-            )
-            prop = cur.fetchone()
-            
-            # Save portal links if provided
-            portal_links_raw = form.get("portal_links") if "multipart/form-data" in content_type else getattr(payload, "portal_links", None)
-            if portal_links_raw:
-                try:
-                    links = json.loads(portal_links_raw) if isinstance(portal_links_raw, str) else portal_links_raw
-                    for link in links:
-                        cur.execute(
-                            "INSERT INTO property_links (property_id, url, source_tag) VALUES (%s, %s, %s)",
-                            (prop_id, link.get("url"), link.get("source"))
-                        )
-                except Exception as e:
-                    print(f"Error saving portal links: {e}")
-            
-            conn.commit()
-            
-            # Fetch links to return
-            cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (prop_id,))
-            prop["portal_links"] = cur.fetchall()
-            
-            return prop
-    except psycopg2.IntegrityError as e:
-        conn.rollback()
-        print("FAILED CONSTRAINT:", e.diag.constraint_name)
-        print("DETAIL:", e.diag.message_detail)
-        raise HTTPException(
-            status_code=400,
-            detail=f"Constraint [{e.diag.constraint_name}] failed: {e.diag.message_detail}"
-        )
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
 
-@app.get("/api/properties", response_model=List[PropertyResponse])
-async def list_properties():
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT p.id, p.manager_id, p.title, p.budget_range, p.pdf_url
-                FROM properties p
-                """
-            )
-            props = cur.fetchall()
-            
-            for p in props:
-                cur.execute("SELECT url, source_tag as source FROM property_links WHERE property_id = %s", (p["id"],))
-                p["portal_links"] = cur.fetchall()
-                
-            print("####################################################################")   
-            print("props gotten", props)
-            return props
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-
-
-@app.put("/api/properties/{property_id}")
-async def update_property(property_id: str, payload: PropertyUpdate):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            updates = []
-            values = []
-            if payload.title is not None:
-                updates.append("title = %s")
-                values.append(payload.title)
-            if payload.address is not None:
-                updates.append("address = %s")
-                values.append(payload.address)
-            if payload.budget_range is not None:
-                updates.append("budget_range = %s")
-                values.append(payload.budget_range)
-            if payload.pdf_url is not None:
-                updates.append("pdf_url = %s")
-                values.append(payload.pdf_url)
-                
-            if not updates:
-                return {"status": "success"}
-                
-            values.append(property_id)
-            query = f"UPDATE properties SET {', '.join(updates)} WHERE id = %s"
-            cur.execute(query, values)
-            conn.commit()
-            return {"status": "success"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-
-@app.get("/api/properties/{property_id}/assets")
-async def get_property_assets(property_id: str, request: Request):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT p.title, pdf_url FROM properties WHERE id = %s", (property_id,))
-            prop = cur.fetchone()
-            if not prop:
-                raise HTTPException(status_code=404, detail="Property not found")
-            
-            assets = []
-            base_url = str(request.base_url).rstrip("/")
-            
-            # Helper to make full url
-            def make_url(url_val):
-                if not url_val: return None
-                url_val = url_val.strip()
-                if url_val.startswith("http://") or url_val.startswith("https://"):
-                    return url_val
-                return f"{base_url}{url_val if url_val.startswith('/') else '/' + url_val}"
-                        
-            if prop["pdf_url"]:
-                full_pdf = make_url(prop["pdf_url"])
-                if full_pdf:
-                    assets.append({
-                        "url": full_pdf,
-                        "mimetype": "application/pdf",
-                        "fileName": f"{property_id}.pdf"
-                    })
-
-            print("####################################################################")
-            print(f"DEBUG: Returning assets for property {property_id}: {assets}")
-                    
-            return assets
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-class PropertyCreate(BaseModel):
-    id: str = Field(..., description="Unique Property ID (e.g. ATH-39)")
-    manager_id: str
-    title: str
-    address: Optional[str] = None
-    description: Optional[str] = None
-    budget_range: Optional[str] = None
-    image_url: Optional[str] = None
-    pdf_url: Optional[str] = None
-async def update_property(property_id: str, payload: PropertyUpdate):
-    conn = get_db_connection()
-    try:
-        with conn.cursor() as cur:
-            updates = []
-            values = []
-            if payload.title is not None:
-                updates.append("title = %s")
-                values.append(payload.title)
-            if payload.budget_range is not None:
-                updates.append("budget_range = %s")
-                values.append(payload.budget_range)
-            if payload.pdf_url is not None:
-                updates.append("pdf_url = %s")
-                values.append(payload.pdf_url)
-                
-            if not updates:
-                return {"status": "success"}
-                
-            values.append(property_id)
-            query = f"UPDATE properties SET {', '.join(updates)} WHERE id = %s"
-            cur.execute(query, values)
-            conn.commit()
-            return {"status": "success"}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        conn.close()
-
-
-class HotLeadNotifyRequest(BaseModel):
-    lead: dict
-    managerEmail: Optional[str] = None
-    reminder: Optional[bool] = False
-
-@app.post("/api/notify/hot-lead")
-async def notify_hot_lead(payload: HotLeadNotifyRequest):
-    lead = payload.lead
-    manager_email = "nmirnes32@gmail.com" #payload.managerEmail
-    reminder = payload.reminder
-    
-    if not manager_email:
-        return {"status": "skipped", "reason": "No manager email provided"}
-
-    # Extract lead details
-    prop_code = lead.get("property_code", "Unknown")
-    phone = lead.get("phone", "Unknown")
-    payment = lead.get("payment", "Unknown")
-    availability = lead.get("availability", "Unknown")
-    source = lead.get("source", "Unknown")
-    
-    metadata = lead.get("metadata", {})
-    name = metadata.get("name", "Unknown Buyer")
-    
-    subject = f"{'REMINDER: ' if reminder else ''}Hot Lead — {prop_code} — {name}"
-    
-    body = f"""
-    Lead Lead Details:
-    ----------------
-    Property: {prop_code}
-    Buyer Name: {name}
-    Phone: +{phone}
-    Payment: {payment}
-    Availability: {availability}
-    Source: {source}
-
-    Please follow up immediately.
-    """
-
-    smtp_server = os.environ.get("SMTP_SERVER")
-    smtp_port = os.environ.get("SMTP_PORT", 587)
-    smtp_user = os.environ.get("SMTP_USER")
-    smtp_pass = os.environ.get("SMTP_PASSWORD")
-
-    if smtp_server and smtp_user and smtp_pass:
-        try:
-            msg = MIMEMultipart()
-            msg['From'] = smtp_user
-            msg['To'] = manager_email
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
-            
-            server = smtplib.SMTP(smtp_server, int(smtp_port))
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            text = msg.as_string()
-            server.sendmail(smtp_user, manager_email, text)
-            server.quit()
-            print(f"✅ Hot-lead email sent to {manager_email}")
-        except Exception as e:
-            print(f"❌ Failed to send hot-lead email: {e}")
-            return {"status": "error", "detail": str(e)}
-    else:
-        print(f"⚠️ SMTP not configured. Would send email to {manager_email}:")
-        print(f"Subject: {subject}\nBody: {body}")
-        
-    return {"status": "success"}
+    return JSONResponse({"status": "ok"})
+"""

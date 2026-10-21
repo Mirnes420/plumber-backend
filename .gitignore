@@ -9,3 +9,4 @@ keepalive.py
 wbot/
 __pycache__/
 *.pyc
+properties.py
