@@ -1,11 +1,10 @@
 import os
 import sys
-from ai_engine import analyze_triage, analyze_property_lead
+from ai_engine import analyze_triage
 from database import log_incident
 from dotenv import load_dotenv
 import urllib.parse
 from twilio.rest import Client
-from database import log_property_lead 
 import asyncio
 import smtplib
 import logging
