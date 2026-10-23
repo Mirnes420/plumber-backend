@@ -89,10 +89,14 @@ def increment_usage_seconds(contractor_id: str, seconds: int) -> bool:
         return True
     db = SessionLocal()
     try:
-        sub = db.query(Subscription).filter(Subscription.whop_user_id == contractor_id).first()
+        sub = db.query(Subscription).filter(Subscription.contractor_id == contractor_id).first()
         if sub is None:
-            # Auto-create a starter subscription row so tracking never silently drops
-            sub = Subscription(whop_user_id=contractor_id, plan_tier="starter")
+            # Populate contractor_id explicitly alongside whop_user_id
+            sub = Subscription(
+                contractor_id=contractor_id,
+                whop_user_id=contractor_id,
+                plan_tier="starter"
+            )
             db.add(sub)
             db.flush()
         sub.used_seconds += int(seconds)
