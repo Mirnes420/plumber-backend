@@ -511,12 +511,13 @@ def get_subscription_cycle_summary(contractor_id: str) -> dict:
         if not sub:
             return {"status": "not_found", "contractor_id": contractor_id, "plan_tier": "starter", "used_seconds": 0, "used_minutes": 0, "extra_minutes": 0, "extra_cost": 0.0}
         summary = calculate_cycle_minutes_overage(sub.plan_tier, sub.used_seconds)
+        whop_user_id = getattr(sub, "whop_user_id", None) or getattr(sub, "whop_member_id", None)
         summary.update({
             "status": "ok",
             "contractor_id": contractor_id,
             "used_seconds": int(sub.used_seconds or 0),
             "cycle_start_date": sub.cycle_start_date,
-            "whop_member_id": sub.whop_member_id,
+            "whop_user_id": whop_user_id,
             "whop_payment_method_id": sub.whop_payment_method_id,
         })
         return summary
@@ -534,9 +535,10 @@ def reconcile_cycle_overages_for_contractor(contractor_id: str) -> dict:
             return {"status": "not_found", "contractor_id": contractor_id}
 
         summary = calculate_cycle_minutes_overage(sub.plan_tier, sub.used_seconds)
+        whop_user_id = getattr(sub, "whop_user_id", None) or getattr(sub, "whop_member_id", None)
         if summary["extra_minutes"] > 0:
             invoice = create_usage_overage_invoice(
-                member_id=sub.whop_member_id,
+                member_id=whop_user_id,
                 account_id=os.getenv("WHOP_ACCOUNT_ID", "biz_LfLkh5acNNVNWI"),
                 payment_method_id=sub.whop_payment_method_id,
                 extra_minutes=summary["extra_minutes"],

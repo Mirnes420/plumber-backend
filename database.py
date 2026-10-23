@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean, Integer
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, synonym
 from sqlalchemy.sql import func
 from dotenv import load_dotenv
 
@@ -71,9 +71,11 @@ class Subscription(Base):
     contractor_id = Column(String, nullable=False, unique=True, index=True)
     plan_tier = Column(String, nullable=False, default="starter")  # starter | pro | business
     used_seconds = Column(Integer, nullable=False, default=0)
-    whop_member_id = Column(String, nullable=True)
+    whop_user_id = Column(String, nullable=True)
     whop_payment_method_id = Column(String, nullable=True)
     cycle_start_date = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    whop_member_id = synonym("whop_user_id")
 
 
 Base.metadata.create_all(bind=engine)

@@ -8,12 +8,14 @@ from whop_sdk.invoices.types.create_invoices_request_product_product import Crea
 
 load_dotenv()
 
+WHOP_BASE_URL = os.getenv("WHOP_BASE_URL", "https://sandbox-api.whop.com/api/v1")
+
 
 def get_whop_client() -> Whop | None:
     api_key = os.getenv("WHOP_API_KEY")
     if not api_key:
         return None
-    return Whop(token=api_key)
+    return Whop(token=api_key, base_url=WHOP_BASE_URL)
 
 
 client = get_whop_client()
