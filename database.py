@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean, Integer
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -67,7 +68,7 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    plumber_id = Column(String, nullable=False, unique=True, index=True)
+    contractor_id = Column(String, nullable=False, unique=True, index=True)
     plan_tier = Column(String, nullable=False, default="starter")  # starter | pro | business
     used_seconds = Column(Integer, nullable=False, default=0)
     whop_member_id = Column(String, nullable=True)
@@ -80,21 +81,23 @@ Base.metadata.create_all(bind=engine)
 
 # ── Usage Helpers ───────────────────────────────────────────────────────────────
 
-def increment_usage_seconds(plumber_id: str, seconds: int) -> bool:
-    """Atomically adds *seconds* to the subscription row for *plumber_id*."""
+def increment_usage_seconds(contractor_id: str, seconds: int) -> bool:
+    """Atomically adds *seconds* to the subscription row for *contractor_id*."""
+    if seconds <= 0:
+        return True
     db = SessionLocal()
     try:
-        sub = db.query(Subscription).filter(Subscription.plumber_id == plumber_id).first()
+        sub = db.query(Subscription).filter(Subscription.contractor_id == contractor_id).first()
         if sub is None:
             # Auto-create a starter subscription row so tracking never silently drops
-            sub = Subscription(plumber_id=plumber_id, plan_tier="starter")
+            sub = Subscription(contractor_id=contractor_id, plan_tier="starter")
             db.add(sub)
             db.flush()
-        sub.used_seconds = Subscription.used_seconds + seconds  # type: ignore[assignment]
+        sub.used_seconds += int(seconds)
         db.commit()
         return True
     except Exception as e:
-        print(f"[USAGE] increment_usage_seconds error for {plumber_id}: {e}")
+        print(f"[USAGE] increment_usage_seconds error for {contractor_id}: {e}")
         db.rollback()
         return False
     finally:

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 from passlib.hash import argon2
 from dotenv import load_dotenv
+from whop import create_usage_overage_invoice
 import jwt as pyjwt
 import traceback
 import psycopg2
@@ -17,6 +18,7 @@ import asyncio
 import httpx
 import json
 import re
+import math
 import os
 import sys
 # Force UTF-8 encoding for standard output and error on Windows
@@ -62,8 +64,17 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 # here you would set Wbot api url and your number from environment variables or defaults
 WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
-RETELL_API_KEY = os.getenv("RETELL_API_KEY") 
+RETELL_API_KEY = os.getenv("RETELL_API_KEY")
+RETELL_AGENT_ID = os.getenv("RETELL_AGENT_ID")
+RETELL_DEFAULT_NUMBER = os.getenv("RETELL_DEFAULT_NUMBER")
+RETELL_FROM_NUMBER = os.getenv("RETELL_FROM_NUMBER")
 
+PLAN_MINUTE_SETTINGS = {
+    "starter": {"included_minutes": 60, "overage_per_minute_usd": 0.25},
+    "pro": {"included_minutes": 300, "overage_per_minute_usd": 0.20},
+    "business": {"included_minutes": 1000, "overage_per_minute_usd": 0.15},
+    "default": {"included_minutes": 0, "overage_per_minute_usd": 0.25},
+}
 
 
 # -------------------- PYDANTIC MODELS ----------------------
@@ -72,7 +83,7 @@ class IncidentJsonPayload(BaseModel):
     description: str
     location: Optional[str] = None
     customer_name: Optional[str] = None
-    plumber_id: Optional[str] = None
+    contractor_id: Optional[str] = None
     demo: Optional[str] = None
     professional_type: Optional[str] = "contractor"
     language: Optional[str] = "en"
@@ -283,7 +294,7 @@ async def api_incident(request: Request):
     description = None
     location = None
     customer_name = None
-    plumber_id = ""
+    contractor_id = ""
     demo = None
     professional_type = "contractor"
     language = "en"
@@ -334,7 +345,7 @@ async def api_incident(request: Request):
         description = data.get("description")
         location = data.get("location")
         customer_name = data.get("customer_name")
-        plumber_id = data.get("plumber_id") or ""
+        contractor_id = data.get("contractor_id") or data.get("plumber_id") or ""
         demo = data.get("demo")
         professional_type = data.get("professional_type") or "contractor"
         language = data.get("language") or "en"
@@ -353,7 +364,7 @@ async def api_incident(request: Request):
         description = form.get("description")
         location = form.get("location")
         customer_name = form.get("customer_name")
-        plumber_id = form.get("plumber_id") or ""
+        contractor_id = form.get("contractor_id") or form.get("plumber_id") or ""
         demo = form.get("demo")
         professional_type = form.get("professional_type") or "contractor"
         language = form.get("language") or "en"
@@ -374,7 +385,7 @@ async def api_incident(request: Request):
             description = form.get("description")
             location = form.get("location")
             customer_name = form.get("customer_name")
-            plumber_id = form.get("plumber_id") or ""
+            contractor_id = form.get("contractor_id") or form.get("plumber_id") or ""
             demo = form.get("demo")
             professional_type = form.get("professional_type") or "contractor"
             language = form.get("language") or "en"
@@ -393,7 +404,7 @@ async def api_incident(request: Request):
 
     # ─── Demo detection ───
     is_demo = str(demo).lower() in ("true", "1", "on", "yes")
-    print(f"🌐 phone={phone} | client={customer_name or 'Unknown'} | contractor={plumber_id} | type={professional_type} | demo={is_demo}")
+    print(f"🌐 phone={phone} | client={customer_name or 'Unknown'} | contractor={contractor_id} | type={professional_type} | demo={is_demo}")
 
     # ─── Business logic ───
     try:
@@ -401,16 +412,16 @@ async def api_incident(request: Request):
 
         dispatcher_email = None
         dispatcher_name = None
-        if plumber_id:
+        if contractor_id:
             from database import SessionLocal, Contractor
             db = SessionLocal()
             try:
-                plumber_obj = db.query(Contractor).filter(
-                    (Contractor.id == plumber_id) | (Contractor.contractor_phone.like(f"%{plumber_id}"))
+                contractor_obj = db.query(Contractor).filter(
+                    (Contractor.id == contractor_id) | (Contractor.contractor_phone.like(f"%{contractor_id}"))
                 ).first()
-                if plumber_obj:
-                    dispatcher_email = getattr(plumber_obj, 'email', None)
-                    dispatcher_name = getattr(plumber_obj, 'name', None)
+                if contractor_obj:
+                    dispatcher_email = getattr(contractor_obj, 'email', None)
+                    dispatcher_name = getattr(contractor_obj, 'name', None)
                     print(f"DEBUG: contractor={dispatcher_name} email={dispatcher_email}")
             finally:
                 db.close()
@@ -422,7 +433,7 @@ async def api_incident(request: Request):
             customer_name=customer_name,
             media_url=None,
             sender_override=None,
-            contractor_override=plumber_id,
+            contractor_override=contractor_id,
             image_bytes=image_bytes,
             demo=is_demo,
             professional_type=professional_type or 'contractor',
@@ -470,10 +481,86 @@ async def api_incident(request: Request):
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
 
 
+def calculate_cycle_minutes_overage(plan_tier: str, used_seconds: int) -> dict:
+    """Returns included minutes, used minutes, extra minutes, and amount for the cycle."""
+    plan_name = (plan_tier or "starter").lower()
+    config = PLAN_MINUTE_SETTINGS.get(plan_name, PLAN_MINUTE_SETTINGS["default"])
+    included_minutes = int(config["included_minutes"])
+    per_minute_price = float(config["overage_per_minute_usd"])
+
+    used_minutes = max(0, math.ceil(max(0, int(used_seconds)) / 60.0))
+    extra_minutes = max(0, used_minutes - included_minutes)
+    extra_cost = round(extra_minutes * per_minute_price, 2)
+
+    return {
+        "plan_tier": plan_name,
+        "included_minutes": included_minutes,
+        "used_minutes": used_minutes,
+        "extra_minutes": extra_minutes,
+        "per_minute_price_usd": per_minute_price,
+        "extra_cost": extra_cost,
+    }
+
+
+def get_subscription_cycle_summary(contractor_id: str) -> dict:
+    from database import SessionLocal, Subscription
+
+    db = SessionLocal()
+    try:
+        sub = db.query(Subscription).filter(Subscription.contractor_id == contractor_id).first()
+        if not sub:
+            return {"status": "not_found", "contractor_id": contractor_id, "plan_tier": "starter", "used_seconds": 0, "used_minutes": 0, "extra_minutes": 0, "extra_cost": 0.0}
+        summary = calculate_cycle_minutes_overage(sub.plan_tier, sub.used_seconds)
+        summary.update({
+            "status": "ok",
+            "contractor_id": contractor_id,
+            "used_seconds": int(sub.used_seconds or 0),
+            "cycle_start_date": sub.cycle_start_date,
+            "whop_member_id": sub.whop_member_id,
+            "whop_payment_method_id": sub.whop_payment_method_id,
+        })
+        return summary
+    finally:
+        db.close()
+
+
+def reconcile_cycle_overages_for_contractor(contractor_id: str) -> dict:
+    from database import SessionLocal, Subscription, reset_subscription_cycle
+
+    db = SessionLocal()
+    try:
+        sub = db.query(Subscription).filter(Subscription.contractor_id == contractor_id).first()
+        if not sub:
+            return {"status": "not_found", "contractor_id": contractor_id}
+
+        summary = calculate_cycle_minutes_overage(sub.plan_tier, sub.used_seconds)
+        if summary["extra_minutes"] > 0:
+            invoice = create_usage_overage_invoice(
+                member_id=sub.whop_member_id,
+                account_id=os.getenv("WHOP_ACCOUNT_ID", "biz_LfLkh5acNNVNWI"),
+                payment_method_id=sub.whop_payment_method_id,
+                extra_minutes=summary["extra_minutes"],
+                unit_price_usd=summary["per_minute_price_usd"],
+                product_title=f"{sub.plan_tier.title()} usage overage",
+                description=f"Retell overage: {summary['extra_minutes']} extra minutes billed at ${summary['per_minute_price_usd']:.2f}/minute",
+            )
+            summary["invoice"] = invoice
+            print(f"[BILLING] Charged {summary['extra_minutes']} minutes for contractor_id={contractor_id} -> ${summary['extra_cost']:.2f}")
+        reset_subscription_cycle(sub.id)
+        summary["status"] = "processed"
+        summary["used_seconds_after_reset"] = 0
+        return summary
+    except Exception as exc:
+        print(f"[BILLING] reconcile_cycle_overages_for_contractor error for {contractor_id}: {exc}")
+        return {"status": "error", "contractor_id": contractor_id, "error": str(exc)}
+    finally:
+        db.close()
+
+
 # ----------------------- RETELL ----------------------- #
 
 # ── Track Retell Call Duration for Usage Overage ──────────────────────────────
-def extract_and_track_duration(full_call_data: dict, plumber_id: str):
+def extract_and_track_duration(full_call_data: dict, contractor_id: str):
     # Retell gives start_timestamp and end_timestamp in ms, or duration_ms directly
     start_ts = full_call_data.get("start_timestamp")
     end_ts = full_call_data.get("end_timestamp")
@@ -482,13 +569,57 @@ def extract_and_track_duration(full_call_data: dict, plumber_id: str):
     if not duration_ms and (start_ts and end_ts):
         duration_ms = end_ts - start_ts
 
-    if duration_ms and plumber_id:
+    if duration_ms and contractor_id:
         duration_seconds = int(duration_ms / 1000)
-        
-        # Async/Sync DB call to increment used seconds for this contractor/plumber
-        # e.g., using Supabase / PostgreSQL:
-        # db.rpc('increment_usage_seconds', {'p_id': plumber_id, 'sec': duration_seconds})
-        print(f"[USAGE] Logged {duration_seconds}s for plumber_id={plumber_id}")
+        from database import increment_usage_seconds
+        increment_usage_seconds(contractor_id, duration_seconds)
+        print(f"[USAGE] Logged {duration_seconds}s for contractor_id={contractor_id}")
+
+
+@app.post("/retell/start-call")
+async def start_retell_call(payload: dict | None = None):
+    body = payload or {}
+    to_number = (body.get("to_number") or RETELL_DEFAULT_NUMBER or "").strip()
+    if not to_number:
+        raise HTTPException(status_code=400, detail="to_number is required or RETELL_DEFAULT_NUMBER must be set")
+
+    if not RETELL_API_KEY:
+        raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
+
+    agent_id = body.get("agent_id") or RETELL_AGENT_ID
+    if not agent_id:
+        raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
+
+    call_payload = {
+        "agent_id": agent_id,
+        "to_number": to_number,
+    }
+    if RETELL_FROM_NUMBER:
+        call_payload["from_number"] = RETELL_FROM_NUMBER
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.retellai.com/v2/create-phone-call",
+                headers={"Authorization": f"Bearer {RETELL_API_KEY}", "Content-Type": "application/json"},
+                json=call_payload,
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+            return {"status": "success", "data": data}
+    except Exception as exc:
+        print(f"[RETELL] start-call failed: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/billing/reconcile-cycle")
+async def billing_reconcile_cycle(payload: dict | None = None):
+    body = payload or {}
+    contractor_id = (body.get("contractor_id") or body.get("plumber_id") or body.get("id") or "").strip()
+    if not contractor_id:
+        raise HTTPException(status_code=400, detail="contractor_id is required")
+    return reconcile_cycle_overages_for_contractor(contractor_id)
 
 @app.post("/retell-webhook")
 async def retell_webhook(request: Request):
@@ -517,7 +648,7 @@ async def retell_webhook(request: Request):
             description   = str(payload.get("description") or "")
             location      = str(payload.get("location") or "")
             customer_name = str(payload.get("customer_name") or "")
-            plumber_id    = str(payload.get("plumber_id") or "")
+            contractor_id = str(payload.get("contractor_id") or payload.get("plumber_id") or "")
             professional_type = str(payload.get("professional_type") or "contractor")
             language      = str(payload.get("language") or "en")
             demo          = str(payload.get("demo") or "false").lower()
@@ -529,7 +660,7 @@ async def retell_webhook(request: Request):
                 "description": description,
                 "location": location,
                 "customer_name": customer_name,
-                "plumber_id": plumber_id,
+                "contractor_id": contractor_id,
                 "professional_type": professional_type,
                 "language": language,
                 "demo": demo,
@@ -583,7 +714,7 @@ async def retell_webhook(request: Request):
         description   = payload.get("description") or ""
         location      = payload.get("location") or ""
         customer_name = payload.get("customer_name") or ""
-        plumber_id    = str(payload.get("plumber_id") or "")
+        contractor_id = str(payload.get("contractor_id") or payload.get("plumber_id") or "")
         professional_type = payload.get("professional_type") or "contractor"
         language      = payload.get("language") or "en"
         demo          = str(payload.get("demo") or "false").lower()
@@ -595,7 +726,7 @@ async def retell_webhook(request: Request):
                                                  or call_analysis.get("summary") or "")
         if not location:       location       = call_analysis.get("location") or ""
         if not customer_name:  customer_name  = call_analysis.get("customer_name") or ""
-        if not plumber_id:     plumber_id     = str(call_analysis.get("plumber_id") or "")
+        if not contractor_id:  contractor_id  = str(call_analysis.get("contractor_id") or call_analysis.get("plumber_id") or "")
         if professional_type == "contractor":
             professional_type = call_analysis.get("professional_type") or "contractor"
 
@@ -609,7 +740,7 @@ async def retell_webhook(request: Request):
         if not description:    description    = dynamic_vars.get("description") or ""
         if not location:       location       = dynamic_vars.get("location") or ""
         if not customer_name:  customer_name  = dynamic_vars.get("customer_name") or ""
-        if not plumber_id:     plumber_id     = str(dynamic_vars.get("plumber_id") or "")
+        if not contractor_id:  contractor_id  = str(dynamic_vars.get("contractor_id") or dynamic_vars.get("plumber_id") or "")
         if professional_type == "contractor":
             professional_type = dynamic_vars.get("professional_type") or "contractor"
 
@@ -640,14 +771,14 @@ async def retell_webhook(request: Request):
             "description": description,
             "location": location,
             "customer_name": customer_name,
-            "plumber_id": plumber_id,
+            "contractor_id": contractor_id,
             "professional_type": professional_type,
             "language": language,
             "demo": demo,
         }
 
         
-        extract_and_track_duration(full_call, plumber_id)
+        extract_and_track_duration(full_call, contractor_id)
 
         base_url = str(request.base_url).rstrip("/")
         async with httpx.AsyncClient() as client:
