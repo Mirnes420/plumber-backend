@@ -66,7 +66,6 @@ WBOT_API_URL = os.getenv("WBOT_API_URL", "http://localhost:3001").rstrip("/")
 PLUMBER_NUMBER = os.getenv("PLUMBER_WHATSAPP_NUMBER")
 RETELL_API_KEY = os.getenv("RETELL_API_KEY")
 RETELL_AGENT_ID = os.getenv("RETELL_AGENT_ID")
-RETELL_DEFAULT_NUMBER = os.getenv("RETELL_DEFAULT_NUMBER")
 RETELL_FROM_NUMBER = os.getenv("RETELL_FROM_NUMBER")
 
 PLAN_MINUTE_SETTINGS = {
@@ -581,7 +580,7 @@ def extract_and_track_duration(full_call_data: dict, contractor_id: str):
 @app.post("/retell/start-call")
 async def start_retell_call(payload: dict | None = None):
     body = payload or {}
-    to_number = (body.get("to_number") or RETELL_DEFAULT_NUMBER or "").strip()
+    to_number = body.get("to_number").strip()
     if not to_number:
         raise HTTPException(status_code=400, detail="to_number is required or RETELL_DEFAULT_NUMBER must be set")
 
