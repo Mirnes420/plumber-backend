@@ -48,6 +48,7 @@ class Contractor(Base):
 
     id = Column(String, primary_key=True)
     name = Column(String)
+    business_name = Column(String)
     contractor_phone = Column(String)
     dispatcher_phone = Column(String)
     active = Column(Boolean, default=True)
@@ -261,3 +262,11 @@ def get_contractor_by_id(contractor_id: str):
         return None
     finally:
         db.close()
+
+
+def get_business_name(contractor_id: str):
+    """Fetches the business name for a given contractor ID."""
+    contractor = get_contractor_by_id(contractor_id)
+    if contractor:
+        return contractor.business_name if hasattr(contractor, 'business_name') else contractor.name
+    return "Unknown Business"
