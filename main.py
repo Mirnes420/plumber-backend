@@ -580,10 +580,6 @@ def extract_and_track_duration(full_call_data: dict, contractor_id: str):
 @app.post("/retell/start-call")
 async def start_retell_call(payload: dict | None = None):
     body = payload or {}
-    to_number = body.get("to_number").strip()
-    if not to_number:
-        raise HTTPException(status_code=400, detail="to_number is required or RETELL_DEFAULT_NUMBER must be set")
-
     if not RETELL_API_KEY:
         raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
 
@@ -591,26 +587,25 @@ async def start_retell_call(payload: dict | None = None):
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
 
+    # Web calls do NOT use phone numbers or to_number
     call_payload = {
         "agent_id": agent_id,
-        "to_number": to_number,
     }
-    if RETELL_FROM_NUMBER:
-        call_payload["from_number"] = RETELL_FROM_NUMBER
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.retellai.com/v2/create-phone-call",
+                "https://api.retellai.com/v2/create-web-call",
                 headers={"Authorization": f"Bearer {RETELL_API_KEY}", "Content-Type": "application/json"},
                 json=call_payload,
                 timeout=30.0,
             )
             response.raise_for_status()
             data = response.json()
-            return {"status": "success", "data": data}
+            # Returns an access_token that the browser SDK requires
+            return {"status": "success", "access_token": data.get("access_token"), "data": data}
     except Exception as exc:
-        print(f"[RETELL] start-call failed: {exc}")
+        print(f"[RETELL] start-web-call failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
 
 
