@@ -1,6 +1,6 @@
 import os
 from datetime import datetime, timedelta, timezone
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean, Integer
+from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean, Integer, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, synonym
 from sqlalchemy.sql import func
@@ -80,6 +80,22 @@ class Subscription(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_contractors_business_name_column():
+    db = SessionLocal()
+    try:
+        db.execute(text("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS business_name VARCHAR"))
+        db.commit()
+        print("✅ contractors.business_name column ready.")
+    except Exception as e:
+        print(f"⚠️ business_name migration failed: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+ensure_contractors_business_name_column()
 
 
 # ── Usage Helpers ───────────────────────────────────────────────────────────────

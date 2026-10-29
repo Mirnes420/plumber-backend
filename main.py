@@ -588,8 +588,8 @@ async def start_retell_call(payload: dict | None = None):
     agent_id = RETELL_AGENT_ID
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
-    from database import db_get_business_name
-    # Optional: Query your PostgreSQL database here using contractor_id to get the real business name
+
+    from database import get_business_name
     business_name = get_business_name(contractor_id)
 
     call_payload = {
