@@ -580,24 +580,16 @@ def extract_and_track_duration(full_call_data: dict, contractor_id: str):
 @app.post("/retell/start-call")
 async def start_retell_call(payload: dict | None = None):
     body = payload or {}
-    contractor_id = body.get("contractor_id", "1")
-
     if not RETELL_API_KEY:
         raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
 
-    agent_id = RETELL_AGENT_ID
+    agent_id = body.get("agent_id") or RETELL_AGENT_ID
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
 
-    from database import get_business_name
-    business_name = get_business_name(contractor_id)
-
+    # Web calls do NOT use phone numbers or to_number
     call_payload = {
         "agent_id": agent_id,
-        "retell_llm_dynamic_variables": {
-            "business_name": business_name,
-            "contractor_id": contractor_id
-        }
     }
 
     try:
@@ -610,14 +602,12 @@ async def start_retell_call(payload: dict | None = None):
             )
             response.raise_for_status()
             data = response.json()
-            return {
-                "status": "success", 
-                "access_token": data.get("access_token"), 
-                "call_id": data.get("call_id")
-            }
+            # Returns an access_token that the browser SDK requires
+            return {"status": "success", "access_token": data.get("access_token"), "data": data}
     except Exception as exc:
-        print(f"[RETELL] create-web-call failed: {exc}")
+        print(f"[RETELL] start-web-call failed: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
+
 
 
 @app.post("/billing/reconcile-cycle")
