@@ -579,29 +579,42 @@ def extract_and_track_duration(full_call_data: dict, contractor_id: str):
 
 
 @app.post("/retell/start-call")
-async def start_retell_call(payload: dict | None = None):
+async def start_retell_call(request: Request, payload: dict | None = None):
     body = payload or {}
-    
+    query = request.query_params
+
     if not RETELL_API_KEY:
         raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
 
-    agent_id = body.get("agent_id") or RETELL_AGENT_ID
+    agent_id = body.get("agent_id") or query.get("agent_id") or RETELL_AGENT_ID
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
 
+    contractor_id = (
+        body.get("contractor_id")
+        or body.get("id")
+        or query.get("contractor_id")
+        or query.get("id")
+        or "1"
+    )
+
+    extra_vars = body.get("retell_llm_dynamic_variables") or {}
+    if not isinstance(extra_vars, dict):
+        extra_vars = {}
+
+    from database import get_business_name
+    business_name = get_business_name(str(contractor_id)) or "Unknown Business"
+
     call_payload = {
         "agent_id": agent_id,
-    }
-    
-    contractor_id = body.get("contractor_id")
-    extra_vars = body.get("retell_llm_dynamic_variables") or {}
-    if contractor_id:
-        call_payload["retell_llm_dynamic_variables"] = {
+        "retell_llm_dynamic_variables": {
+            "business_name": business_name,
             "contractor_id": str(contractor_id),
-            **(extra_vars if isinstance(extra_vars, dict) else {})
-        }
+            **extra_vars,
+        },
+    }
 
-    print(f"[RETELL] Creating v3 web call for agent={agent_id}")
+    print(f"[RETELL] Creating v3 web call for agent={agent_id} contractor_id={contractor_id} business_name={business_name}")
 
     try:
         async with httpx.AsyncClient() as client:
