@@ -580,6 +580,7 @@ def extract_and_track_duration(full_call_data: dict, contractor_id: str):
 @app.post("/retell/start-call")
 async def start_retell_call(payload: dict | None = None):
     body = payload or {}
+    
     if not RETELL_API_KEY:
         raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
 
@@ -587,28 +588,55 @@ async def start_retell_call(payload: dict | None = None):
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
 
-    # Web calls do NOT use phone numbers or to_number
     call_payload = {
         "agent_id": agent_id,
     }
+    
+    contractor_id = body.get("contractor_id")
+    extra_vars = body.get("retell_llm_dynamic_variables") or {}
+    if contractor_id:
+        call_payload["retell_llm_dynamic_variables"] = {
+            "contractor_id": str(contractor_id),
+            **(extra_vars if isinstance(extra_vars, dict) else {})
+        }
+
+    print(f"[RETELL] Creating v3 web call for agent={agent_id}")
 
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.retellai.com/v2/create-web-call",
-                headers={"Authorization": f"Bearer {RETELL_API_KEY}", "Content-Type": "application/json"},
+                "https://api.retellai.com/v3/create-web-call",
+                headers={
+                    "Authorization": f"Bearer {RETELL_API_KEY}",
+                    "Content-Type": "application/json"
+                },
                 json=call_payload,
                 timeout=30.0,
             )
+            
+            if response.status_code >= 400:
+                print(f"[RETELL] {response.status_code} Response: {response.text}")
+            
             response.raise_for_status()
             data = response.json()
-            # Returns an access_token that the browser SDK requires
-            return {"status": "success", "access_token": data.get("access_token"), "data": data}
+            
+            return {
+                "status": "success",
+                "access_token": data.get("access_token"),
+                "call_id": data.get("call_id"),
+                "transport": data.get("transport"),
+                "ice_servers": data.get("ice_servers"),
+                "data": data
+            }
+            
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Retell API error: {exc.response.text}"
+        )
     except Exception as exc:
-        print(f"[RETELL] start-web-call failed: {exc}")
+        print(f"[RETELL] Unexpected error: {exc}")
         raise HTTPException(status_code=500, detail=str(exc))
-
-
 
 @app.post("/billing/reconcile-cycle")
 async def billing_reconcile_cycle(payload: dict | None = None):
