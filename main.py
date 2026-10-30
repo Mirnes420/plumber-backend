@@ -21,6 +21,7 @@ import re
 import math
 import os
 import sys
+
 # Force UTF-8 encoding for standard output and error on Windows
 if sys.platform.startswith("win"):
     if hasattr(sys.stdout, "reconfigure"):
@@ -646,6 +647,29 @@ async def billing_reconcile_cycle(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="contractor_id is required")
     return reconcile_cycle_overages_for_contractor(contractor_id)
 
+def sanitize_phone(phone_input: str) -> str:
+    """Extract digits or convert spelled-out number strings to numeric digits."""
+    if not phone_input:
+        return ""
+    
+    # Standardize and strip punctuation
+    phone_str = str(phone_input).strip()
+    
+    # 1. Direct digit extraction
+    digits = re.sub(r"\D", "", phone_str)
+    if digits:
+        return digits
+        
+    # 2. Word-to-digit fallback (if LLM passed spelled-out numbers like "three three five")
+    word_map = {
+        "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+        "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"
+    }
+    tokens = re.findall(r"\b[a-zA-Z]+\b", phone_str.lower())
+    translated = "".join([word_map[t] for t in tokens if t in word_map])
+    return translated
+
+
 @app.post("/retell-webhook")
 async def retell_webhook(request: Request):
     try:
@@ -662,34 +686,32 @@ async def retell_webhook(request: Request):
 
         print(f"📞 Event: {event!r} | Call ID: {call_id!r}")
 
-        # ── Fast path: Retell custom post-call webhook ────────────────────────
-        # Retell fires a *separate* POST with the AI-extracted structured fields
-        # directly at the top level (no "event" key, no "call" wrapper).
-        # Detect this by checking for our domain-specific keys and forward
-        # immediately — before any event-gating logic.
-        has_direct_fields = bool(payload.get("phone") and payload.get("description"))
-        if has_direct_fields:
-            phone         = str(payload.get("phone") or "")
-            description   = str(payload.get("description") or "")
-            location      = str(payload.get("location") or "")
-            customer_name = str(payload.get("customer_name") or "")
-            contractor_id = str(payload.get("contractor_id") or "")
-            professional_type = str(payload.get("professional_type") or "contractor")
-            language      = str(payload.get("language") or "en")
-            demo          = str(payload.get("demo") or "false").lower()
+        # ── 1. Priority Path: Direct Tool-Call Arguments ──────────────────────
+        # When Retell triggers a custom tool (submit_incident), arguments are
+        # nested inside 'args' or 'tool_call'. Handle these immediately.
+        tool_call_args = None
+        if "args" in payload:
+            tool_call_args = payload.get("args")
+        elif "tool_call" in payload and isinstance(payload["tool_call"], dict):
+            tool_call_args = payload["tool_call"].get("arguments")
+        elif payload.get("interaction_type") == "tool_call" or event == "tool_call":
+            tool_call_args = payload.get("args") or payload.get("tool_call_arguments")
 
-            print(f"[RETELL] Direct payload → phone={phone!r} | name={customer_name!r} | location={location!r} | type={professional_type} | demo={demo}")
-
+        if tool_call_args and isinstance(tool_call_args, dict):
+            print(f"[RETELL] Captured tool execution payload: {tool_call_args}")
+            
+            raw_phone = str(tool_call_args.get("phone") or "")
             json_data = {
-                "phone": phone,
-                "description": description,
-                "location": location,
-                "customer_name": customer_name,
-                "contractor_id": contractor_id,
-                "professional_type": professional_type,
-                "language": language,
-                "demo": demo,
+                "phone": sanitize_phone(raw_phone),
+                "description": str(tool_call_args.get("description") or ""),
+                "location": str(tool_call_args.get("location") or ""),
+                "customer_name": str(tool_call_args.get("customer_name") or ""),
+                "contractor_id": str(tool_call_args.get("contractor_id") or ""),
+                "professional_type": str(tool_call_args.get("professional_type") or "contractor"),
+                "language": str(tool_call_args.get("language") or "en"),
+                "demo": str(tool_call_args.get("demo") or "false").lower(),
             }
+
             base_url = str(request.base_url).rstrip("/")
             async with httpx.AsyncClient() as client:
                 response = await client.post(f"{base_url}/api/incident", json=json_data, timeout=60.0)
@@ -700,24 +722,41 @@ async def retell_webhook(request: Request):
                 print(f"[RETELL] /api/incident returned {response.status_code}: {response.text[:500]}")
                 return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=200)
 
-        # ── Standard Retell call_ended / call_analyzed flow ───────────────────
+        # ── 2. Fast Path: Flat Webhook Object ─────────────────────────────────
+        has_direct_fields = bool(payload.get("phone") and payload.get("description"))
+        if has_direct_fields:
+            raw_phone = str(payload.get("phone") or "")
+            json_data = {
+                "phone": sanitize_phone(raw_phone),
+                "description": str(payload.get("description") or ""),
+                "location": str(payload.get("location") or ""),
+                "customer_name": str(payload.get("customer_name") or ""),
+                "contractor_id": str(payload.get("contractor_id") or ""),
+                "professional_type": str(payload.get("professional_type") or "contractor"),
+                "language": str(payload.get("language") or "en"),
+                "demo": str(payload.get("demo") or "false").lower(),
+            }
+
+            print(f"[RETELL] Direct payload → phone={json_data['phone']!r} | name={json_data['customer_name']!r}")
+
+            base_url = str(request.base_url).rstrip("/")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(f"{base_url}/api/incident", json=json_data, timeout=60.0)
+
+            if response.status_code == 200:
+                return JSONResponse({"status": "success", "incident_response": response.json()})
+            else:
+                print(f"[RETELL] /api/incident returned {response.status_code}: {response.text[:500]}")
+                return JSONResponse({"status": "error", "detail": response.text[:500]}, status_code=200)
+
+        # ── 3. Fallback: Standard Post-Call Analysis (call_ended / call_analyzed)
         if event not in ("call_analyzed", "call_ended"):
             return JSONResponse({"status": "ignored", "event": event})
 
         if not call_id:
             return JSONResponse({"status": "error", "detail": "No call_id"}, status_code=400)
-
-
-        # ── Standard Retell call_ended / call_analyzed flow ───────────────────
-        if event not in ("call_analyzed", "call_ended"):
-            return JSONResponse({"status": "ignored", "event": event})
-
-        if not call_id:
-            return JSONResponse({"status": "error", "detail": "No call_id"}, status_code=400)
-
 
         full_call = call
-
         if RETELL_API_KEY:
             try:
                 async with httpx.AsyncClient() as client:
@@ -728,71 +767,73 @@ async def retell_webhook(request: Request):
                     )
                     if retell_response.status_code == 200:
                         full_call = retell_response.json()
-                        print(f"[RETELL] Fetched full call from API OK")
-                    else:
-                        print(f"[RETELL] Retell API returned {retell_response.status_code}, using webhook payload")
+                        print("[RETELL] Fetched full call details from API")
             except Exception as http_err:
-                print(f"[WARNING] Could not fetch call from Retell API, using webhook payload: {http_err}")
+                print(f"[WARNING] API fetch failed, using webhook payload: {http_err}")
 
-        # ── 1. Top-level payload fields ───────────────────────────────────────
-        phone         = payload.get("phone") or ""
-        description   = payload.get("description") or ""
-        location      = payload.get("location") or ""
-        customer_name = payload.get("customer_name") or ""
-        contractor_id = str(payload.get("contractor_id") or payload.get("plumber_id") or "")
-        professional_type = payload.get("professional_type") or "contractor"
-        language      = payload.get("language") or "en"
-        demo          = str(payload.get("demo") or "false").lower()
-
-        # ── 2. call_analysis object ───────────────────────────────────────────
+        # Cascade extraction: Top-Level -> call_analysis -> dynamic_variables
         call_analysis = full_call.get("call_analysis") or {}
-        if not phone:          phone          = call_analysis.get("phone") or ""
-        if not description:    description    = (call_analysis.get("description")
-                                                 or call_analysis.get("summary") or "")
-        if not location:       location       = call_analysis.get("location") or ""
-        if not customer_name:  customer_name  = call_analysis.get("customer_name") or ""
-        if not contractor_id:  contractor_id  = str(call_analysis.get("contractor_id") or call_analysis.get("plumber_id") or "")
-        if professional_type == "contractor":
-            professional_type = call_analysis.get("professional_type") or "contractor"
-
-        # ── 3. from_number fallback ───────────────────────────────────────────
-        if not phone:
-            phone = full_call.get("from_number") or full_call.get("caller_number") or ""
-
-        # ── 4. LLM dynamic variables ──────────────────────────────────────────
         dynamic_vars = full_call.get("retell_llm_dynamic_variables") or {}
-        if not phone:          phone          = dynamic_vars.get("phone") or ""
-        if not description:    description    = dynamic_vars.get("description") or ""
-        if not location:       location       = dynamic_vars.get("location") or ""
-        if not customer_name:  customer_name  = dynamic_vars.get("customer_name") or ""
-        if not contractor_id:  contractor_id  = str(dynamic_vars.get("contractor_id") or dynamic_vars.get("plumber_id") or "")
-        if professional_type == "contractor":
-            professional_type = dynamic_vars.get("professional_type") or "contractor"
 
-        # ── 5. Transcript regex (last resort) ─────────────────────────────────
+        phone = (payload.get("phone") 
+                 or call_analysis.get("phone") 
+                 or full_call.get("from_number") 
+                 or dynamic_vars.get("phone") 
+                 or "")
+
+        description = (payload.get("description") 
+                       or call_analysis.get("description") 
+                       or call_analysis.get("summary") 
+                       or dynamic_vars.get("description") 
+                       or "")
+
+        location = (payload.get("location") 
+                    or call_analysis.get("location") 
+                    or dynamic_vars.get("location") 
+                    or "")
+
+        customer_name = (payload.get("customer_name") 
+                         or call_analysis.get("customer_name") 
+                         or dynamic_vars.get("customer_name") 
+                         or "")
+
+        contractor_id = str(payload.get("contractor_id") 
+                            or payload.get("plumber_id") 
+                            or call_analysis.get("contractor_id") 
+                            or dynamic_vars.get("contractor_id") 
+                            or "")
+
+        professional_type = (payload.get("professional_type") 
+                             or call_analysis.get("professional_type") 
+                             or "contractor")
+
+        language = payload.get("language") or "en"
+        demo = str(payload.get("demo") or "false").lower()
+
+        # Transcript Regex fallback (last resort)
         transcript = full_call.get("transcript") or ""
         if not description:
             description = transcript if transcript else "Incident reported via voice call."
         if transcript and not customer_name:
-            import re
             name_match = re.search(r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", transcript, re.IGNORECASE)
             if name_match:
                 customer_name = name_match.group(1)
         if transcript and not phone:
-            import re
             phone_match = re.search(r"(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{7,10})", transcript)
             if phone_match:
-                phone = re.sub(r"[\s.\-]", "", phone_match.group(0))
+                phone = phone_match.group(0)
         if transcript and not location:
-            import re
             loc_match = re.search(r"(?:in|at)\s+([A-Z][a-zA-Z\s,]+)", transcript, re.IGNORECASE)
             if loc_match:
                 location = re.split(r'[.!?;]', loc_match.group(1).strip())[0].strip()
 
-        print(f"[RETELL] phone={phone!r} | name={customer_name!r} | location={location!r} | type={professional_type} | demo={demo}")
+        # Always sanitize phone string to digits before dispatch
+        sanitized_phone = sanitize_phone(phone)
+
+        print(f"[RETELL] Processed payload → phone={sanitized_phone!r} | name={customer_name!r} | location={location!r}")
 
         json_data = {
-            "phone": phone,
+            "phone": sanitized_phone,
             "description": description,
             "location": location,
             "customer_name": customer_name,
@@ -802,7 +843,6 @@ async def retell_webhook(request: Request):
             "demo": demo,
         }
 
-        
         extract_and_track_duration(full_call, contractor_id)
 
         base_url = str(request.base_url).rstrip("/")
@@ -819,8 +859,6 @@ async def retell_webhook(request: Request):
         import traceback
         traceback.print_exc()
         return JSONResponse({"status": "error", "detail": str(e)}, status_code=200)
-
-
 
 if __name__ == "__main__":
     import uvicorn
