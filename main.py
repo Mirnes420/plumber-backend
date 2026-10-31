@@ -825,8 +825,10 @@ async def retell_webhook(request: Request):
 
         # Transcript Regex fallback (last resort)
         transcript = full_call.get("transcript") or ""
+        # Never forward the raw live call transcript to the contractor-facing incident.
+        # Keep the voice UI local-only and use a generic summary instead.
         if not description:
-            description = transcript if transcript else "Incident reported via voice call."
+            description = "Customer requested a voice callback for an emergency service inquiry."
         if transcript and not customer_name:
             name_match = re.search(r"my name is ([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", transcript, re.IGNORECASE)
             if name_match:
