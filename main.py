@@ -586,7 +586,11 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     if not RETELL_API_KEY:
         raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
 
-    agent_id = body.get("agent_id") or query.get("agent_id") or RETELL_AGENT_ID
+    provided_agent_id = body.get("agent_id") or query.get("agent_id")
+    if provided_agent_id and provided_agent_id != RETELL_AGENT_ID:
+        print(f"[RETELL] Ignoring client-supplied agent_id={provided_agent_id!r}; using configured agent_id={RETELL_AGENT_ID!r}")
+
+    agent_id = RETELL_AGENT_ID
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
 
@@ -619,7 +623,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.retellai.com/v3/create-web-call",
+                "https://api.retellai.com/v2/create-web-call",
                 headers={
                     "Authorization": f"Bearer {RETELL_API_KEY}",
                     "Content-Type": "application/json"
