@@ -583,6 +583,13 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     body = payload or {}
     query = request.query_params
 
+    try:
+        json_body = await request.json()
+        if isinstance(json_body, dict):
+            body = json_body
+    except Exception:
+        body = body or {}
+
     if not RETELL_API_KEY:
         raise HTTPException(status_code=500, detail="RETELL_API_KEY is not configured")
 
@@ -611,6 +618,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
 
     call_payload = {
         "agent_id": agent_id,
+        "contractor_id": str(contractor_id),
         "transcript": True,
         "retell_llm_dynamic_variables": {
             "business_name": business_name,
@@ -632,13 +640,13 @@ async def start_retell_call(request: Request, payload: dict | None = None):
                 json=call_payload,
                 timeout=30.0,
             )
-            
+
             if response.status_code >= 400:
                 print(f"[RETELL] {response.status_code} Response: {response.text}")
-            
+
             response.raise_for_status()
             data = response.json()
-            
+
             return {
                 "status": "success",
                 "access_token": data.get("access_token"),
@@ -647,7 +655,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
                 "ice_servers": data.get("ice_servers"),
                 "data": data
             }
-            
+
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
             status_code=500,
@@ -655,7 +663,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
         )
     except Exception as exc:
         print(f"[RETELL] Unexpected error: {exc}")
-        raise HTTPException(status_no=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/billing/reconcile-cycle")

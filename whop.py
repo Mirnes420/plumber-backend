@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from whop_sdk import Whop
+from whop_sdk import Whop, WhopEnvironment
 from whop_sdk.invoices.types.create_invoices_request_product import CreateInvoicesRequestProduct
 from whop_sdk.invoices.types.create_invoices_request_product_line_items_item import CreateInvoicesRequestProductLineItemsItem
 from whop_sdk.invoices.types.create_invoices_request_product_plan import CreateInvoicesRequestProductPlan
@@ -15,7 +15,13 @@ def get_whop_client() -> Whop | None:
     api_key = os.getenv("WHOP_API_KEY")
     if not api_key:
         return None
-    return Whop(token=api_key, base_url=WHOP_BASE_URL)
+
+    environment = (
+        WhopEnvironment.SANDBOX
+        if "sandbox" in WHOP_BASE_URL.lower()
+        else WhopEnvironment.PRODUCTION
+    )
+    return Whop(token=api_key, environment=environment)
 
 
 client = get_whop_client()
