@@ -611,6 +611,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
 
     call_payload = {
         "agent_id": agent_id,
+        "transcript": True,
         "retell_llm_dynamic_variables": {
             "business_name": business_name,
             "contractor_id": str(contractor_id),
@@ -656,7 +657,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
         print(f"[RETELL] Unexpected error: {exc}")
         raise HTTPException(status_no=500, detail=str(exc))
 
-        
+
 @app.post("/billing/reconcile-cycle")
 async def billing_reconcile_cycle(payload: dict | None = None):
     body = payload or {}
