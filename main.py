@@ -623,7 +623,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.retellai.com/v2/create-web-call",
+                "https://api.retellai.com/v3/create-web-call",
                 headers={
                     "Authorization": f"Bearer {RETELL_API_KEY}",
                     "Content-Type": "application/json"
@@ -654,8 +654,9 @@ async def start_retell_call(request: Request, payload: dict | None = None):
         )
     except Exception as exc:
         print(f"[RETELL] Unexpected error: {exc}")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_no=500, detail=str(exc))
 
+        
 @app.post("/billing/reconcile-cycle")
 async def billing_reconcile_cycle(payload: dict | None = None):
     body = payload or {}
