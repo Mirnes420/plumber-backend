@@ -614,7 +614,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     if not agent_id:
         raise HTTPException(status_code=500, detail="RETELL_AGENT_ID is not configured")
 
-    contractor_id = (
+    contractor_id = normalize_contractor_id(
         body.get("contractor_id")
         or body.get("id")
         or query.get("contractor_id")
@@ -687,6 +687,19 @@ async def billing_reconcile_cycle(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="contractor_id is required")
     return reconcile_cycle_overages_for_contractor(contractor_id)
 
+def normalize_contractor_id(raw_id):
+    """Normalize plumber_01 / contractor_2 / id=2 inputs to a clean database-safe contractor id."""
+    if raw_id is None:
+        return ""
+    value = str(raw_id).strip()
+    if not value:
+        return ""
+    match = re.search(r"(\d+)", value)
+    if match:
+        return str(int(match.group(1)))
+    return value
+
+
 def extract_phone_from_text(text_value: str) -> str:
     """Look for a U.S./local-style phone number anywhere in freeform text."""
     if not text_value:
@@ -721,7 +734,7 @@ def normalize_incident_payload(payload: dict | None) -> dict:
         "description": description,
         "location": location,
         "customer_name": customer_name,
-        "contractor_id": str(data.get("contractor_id") or data.get("plumber_id") or "").strip(),
+        "contractor_id": normalize_contractor_id(data.get("contractor_id") or data.get("plumber_id") or ""),
         "professional_type": str(data.get("professional_type") or "contractor").strip() or "contractor",
         "language": str(data.get("language") or "en").strip() or "en",
         "demo": str(data.get("demo") or "false").lower(),
@@ -757,7 +770,7 @@ async def retell_webhook(request: Request):
         payload = json.loads(body)
         print(f"[RETELL] Raw payload keys: {list(payload.keys())}")
 
-        request_contractor_id = (
+        request_contractor_id = normalize_contractor_id(
             request.query_params.get("contractor_id")
             or request.query_params.get("id")
             or ""
@@ -765,7 +778,7 @@ async def retell_webhook(request: Request):
         if not request_contractor_id:
             url_match = re.search(r"(?:[?&]|/)(?:contractor_id|id)=([A-Za-z0-9_-]+)", str(request.url))
             if url_match:
-                request_contractor_id = url_match.group(1)
+                request_contractor_id = normalize_contractor_id(url_match.group(1))
 
         event = payload.get("event")
         call = payload.get("call") or {}
@@ -870,7 +883,7 @@ async def retell_webhook(request: Request):
                          or dynamic_vars.get("customer_name") 
                          or "")
 
-        contractor_id = str(
+        contractor_id = normalize_contractor_id(
             payload.get("contractor_id")
             or payload.get("plumber_id")
             or call_analysis.get("contractor_id")

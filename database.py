@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, Column, String, DateTime, Text, Boolean, Integer, text
 from sqlalchemy.ext.declarative import declarative_base
@@ -273,15 +274,29 @@ def update_incident_status(incident_id: str, status: str):
         db.close()
 
 
+def normalize_contractor_id(raw_id):
+    """Convert plumber_01 / contractor_2 / id=2 values into a clean contractor ID."""
+    if raw_id is None:
+        return ""
+    value = str(raw_id).strip()
+    if not value:
+        return ""
+    match = re.search(r"(\d+)", value)
+    if match:
+        return str(int(match.group(1)))
+    return value
+
+
 def get_contractor_by_id(contractor_id: str):
     """Fetches contractor details from DB by ID."""
-    if not contractor_id:
+    normalized = normalize_contractor_id(contractor_id)
+    if not normalized:
         return None
     db = SessionLocal()
     try:
-        return db.query(Contractor).filter(Contractor.id == str(contractor_id), Contractor.active == True).first()
+        return db.query(Contractor).filter(Contractor.id == str(normalized), Contractor.active == True).first()
     except Exception as e:
-        print(f"Error fetching contractor {contractor_id}: {e}")
+        print(f"Error fetching contractor {normalized}: {e}")
         return None
     finally:
         db.close()
