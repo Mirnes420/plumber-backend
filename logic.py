@@ -209,25 +209,51 @@ def _send_email_sync(
     body_text: str,
     body_html: Optional[str] = None,
 ) -> bool:
-    """Sends email via Resend HTTP API (Port 443) to bypass Render SMTP blocks."""
-    try:
-        # Use onboarding@resend.dev during testing.
-        # Once you verify your domain in Resend, change this to 'Emergency Dispatch <dispatch@yourdomain.com>'
-        params = {
-            "from": "Dispatch <dispatch@coherzo.gentlemansolutions.com>",
-            "to": [to_email],
-            "subject": subject,
-            "html": body_html if body_html else f"<p>{body_text}</p>",
-            "text": body_text,
-        }
+    """Sends via Resend when configured; falls back to SMTP for local/Render deployments."""
+    if not to_email or '@' not in str(to_email):
+        logger.warning(f"Skipping email dispatch: invalid recipient '{to_email}'")
+        return False
 
-        response = resend.Emails.send(params)
-        logger.info(
-            f"Email successfully sent to {to_email} (ID: {response.get('id')})"
-        )
+    try:
+        if resend.api_key:
+            params = {
+                "from": "Dispatch <dispatch@coherzo.gentlemansolutions.com>",
+                "to": [to_email],
+                "subject": subject,
+                "html": body_html if body_html else f"<p>{body_text}</p>",
+                "text": body_text,
+            }
+            response = resend.Emails.send(params)
+            logger.info(
+                f"Email successfully sent to {to_email} (ID: {response.get('id')})"
+            )
+            return True
+    except Exception as e:
+        logger.warning(f"Resend email failed for {to_email}: {e}")
+
+    try:
+        if not SMTP_HOST or not SMTP_USER:
+            logger.warning("SMTP fallback skipped: host/user not configured")
+            return False
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_USER
+        msg["To"] = to_email
+        msg.attach(MIMEText(body_text, "plain", "utf-8"))
+        if body_html:
+            msg.attach(MIMEText(body_html, "html", "utf-8"))
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            if SMTP_USER and SMTP_PASSWORD:
+                server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, [to_email], msg.as_string())
+
+        logger.info(f"SMTP fallback email successfully sent to {to_email}")
         return True
     except Exception as e:
-        logger.error(f"Failed to send email to {to_email}: {e}")
+        logger.error(f"SMTP fallback failed for {to_email}: {e}")
         return False
 
 
@@ -239,12 +265,15 @@ async def send_email_async(
     body_html: Optional[str] = None,
 ) -> bool:
     """Offloads the synchronous yagmail function to a background thread pool."""
+    if not to_email or '@' not in str(to_email):
+        logger.warning(f"Skipping email dispatch: invalid recipient '{to_email}'")
+        return False
     return await asyncio.to_thread(
-        _send_email_sync, 
-        to_email, 
-        subject, 
-        body_text, 
-        body_html
+        _send_email_sync,
+        to_email,
+        subject,
+        body_text,
+        body_html,
     )
 
 
@@ -412,6 +441,7 @@ async def process_incoming_incident(
             print(f"contractor override from DB is : {contractor_obj}")
             if contractor_obj:
                 target_contractor = contractor_obj.contractor_phone
+                dispatcher_email = dispatcher_email or getattr(contractor_obj, 'email', None) or os.getenv('DISPATCHER_EMAIL') or os.getenv('SMTP_USER')
                 print(f"📍 Routed to Contractor: {contractor_obj.name} ({target_contractor})")
             else:
                 print(f"⚠️ Contractor ID '{contractor_override}' not found in DB.")

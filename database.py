@@ -75,12 +75,33 @@ class Subscription(Base):
     used_seconds = Column(Integer, nullable=False, default=0)
     whop_user_id = Column(String, nullable=True)
     whop_payment_method_id = Column(String, nullable=True)
+    included_minutes = Column(Integer, nullable=False, default=60) # Set your plan default here
     cycle_start_date = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     whop_member_id = synonym("whop_user_id")
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_subscription_columns():
+    db = SessionLocal()
+    try:
+        if db.bind.dialect.name == "sqlite":
+            try:
+                db.execute(text("ALTER TABLE subscriptions ADD COLUMN included_minutes INTEGER NOT NULL DEFAULT 60"))
+            except Exception as exc:
+                if "duplicate column" not in str(exc).lower() and "already exists" not in str(exc).lower():
+                    raise
+        else:
+            db.execute(text("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS included_minutes INTEGER NOT NULL DEFAULT 60"))
+        db.commit()
+        print("✅ subscriptions.included_minutes column ready.")
+    except Exception as e:
+        print(f"⚠️ included_minutes migration failed: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
 
 def ensure_contractors_business_name_column():
@@ -103,6 +124,7 @@ def ensure_contractors_business_name_column():
         db.close()
 
 
+ensure_subscription_columns()
 ensure_contractors_business_name_column()
 
 
@@ -116,14 +138,16 @@ def increment_usage_seconds(contractor_id: str, seconds: int) -> bool:
     try:
         sub = db.query(Subscription).filter(Subscription.contractor_id == contractor_id).first()
         if sub is None:
-            # Populate contractor_id explicitly alongside whop_user_id
             sub = Subscription(
                 contractor_id=contractor_id,
                 whop_user_id=contractor_id,
-                plan_tier="starter"
+                plan_tier="starter",
+                included_minutes=60,
             )
             db.add(sub)
             db.flush()
+        if sub.included_minutes is None:
+            sub.included_minutes = 60
         sub.used_seconds += int(seconds)
         db.commit()
         return True
