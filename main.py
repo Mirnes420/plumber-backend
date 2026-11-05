@@ -302,16 +302,10 @@ async def api_incident(request: Request):
 
     # ─── Fallback: Extract phone from location or description if missing ───
     if not phone and location:
-        import re
-        phone_match = re.search(r"(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4}|\d{7,10})", location)
-        if phone_match:
-            phone = phone_match.group(0)
+        phone = extract_phone_from_text(location)
 
     if not phone and description:
-        import re
-        phone_match = re.search(r"(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4}|\d{7,10})", description)
-        if phone_match:
-            phone = phone_match.group(0)
+        phone = extract_phone_from_text(description)
 
     # ─── JSON branch ───
     if "application/json" in content_type:
@@ -395,7 +389,26 @@ async def api_incident(request: Request):
             return JSONResponse({"status": "error", "detail": f"Unsupported Content-Type: {raw_ct}"}, status_code=415)
 
     # ─── Validation ───
-    print(f"[DEBUG] phone={phone} | description={description} | location={location} | name={customer_name}")
+    normalized = normalize_incident_payload({
+        "phone": phone,
+        "description": description,
+        "location": location,
+        "customer_name": customer_name,
+        "contractor_id": contractor_id,
+        "professional_type": professional_type,
+        "language": language,
+        "demo": demo,
+    })
+    phone = normalized["phone"]
+    description = normalized["description"]
+    location = normalized["location"]
+    customer_name = normalized["customer_name"]
+    contractor_id = normalized["contractor_id"]
+    professional_type = normalized["professional_type"]
+    language = normalized["language"]
+    demo = normalized["demo"]
+
+    print(f"[DEBUG] normalized phone={phone} | description={description} | location={location} | name={customer_name}")
 
     if not phone:
         return JSONResponse({"status": "error", "detail": "phone is required"}, status_code=400)
@@ -674,20 +687,57 @@ async def billing_reconcile_cycle(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="contractor_id is required")
     return reconcile_cycle_overages_for_contractor(contractor_id)
 
+def extract_phone_from_text(text_value: str) -> str:
+    """Look for a U.S./local-style phone number anywhere in freeform text."""
+    if not text_value:
+        return ""
+    phone_match = re.search(r"(\d{3}[-\.\s]?\d{3}[-\.\s]?\d{4}|\d{7,10})", str(text_value))
+    if not phone_match:
+        return ""
+    return sanitize_phone(phone_match.group(0))
+
+
+def normalize_incident_payload(payload: dict | None) -> dict:
+    """Normalize and recover missing fields before backend validation runs."""
+    data = payload or {}
+    description = str(data.get("description") or "").strip()
+    location = str(data.get("location") or "").strip()
+    customer_name = str(data.get("customer_name") or "").strip()
+    phone = sanitize_phone(str(data.get("phone") or ""))
+
+    if not phone:
+        phone = extract_phone_from_text(description) or extract_phone_from_text(location)
+
+    if not description:
+        description = "Customer requested a voice callback for an emergency service inquiry."
+
+    if not customer_name:
+        name_match = re.search(r"my name is\s+([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)", description, re.IGNORECASE)
+        if name_match:
+            customer_name = name_match.group(1).strip()
+
+    return {
+        "phone": phone,
+        "description": description,
+        "location": location,
+        "customer_name": customer_name,
+        "contractor_id": str(data.get("contractor_id") or data.get("plumber_id") or "").strip(),
+        "professional_type": str(data.get("professional_type") or "contractor").strip() or "contractor",
+        "language": str(data.get("language") or "en").strip() or "en",
+        "demo": str(data.get("demo") or "false").lower(),
+    }
+
+
 def sanitize_phone(phone_input: str) -> str:
     """Extract digits or convert spelled-out number strings to numeric digits."""
     if not phone_input:
         return ""
-    
-    # Standardize and strip punctuation
+
     phone_str = str(phone_input).strip()
-    
-    # 1. Direct digit extraction
     digits = re.sub(r"\D", "", phone_str)
     if digits:
         return digits
-        
-    # 2. Word-to-digit fallback (if LLM passed spelled-out numbers like "three three five")
+
     word_map = {
         "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
         "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"
@@ -706,6 +756,16 @@ async def retell_webhook(request: Request):
 
         payload = json.loads(body)
         print(f"[RETELL] Raw payload keys: {list(payload.keys())}")
+
+        request_contractor_id = (
+            request.query_params.get("contractor_id")
+            or request.query_params.get("id")
+            or ""
+        )
+        if not request_contractor_id:
+            url_match = re.search(r"(?:[?&]|/)(?:contractor_id|id)=([A-Za-z0-9_-]+)", str(request.url))
+            if url_match:
+                request_contractor_id = url_match.group(1)
 
         event = payload.get("event")
         call = payload.get("call") or {}
@@ -726,18 +786,11 @@ async def retell_webhook(request: Request):
 
         if tool_call_args and isinstance(tool_call_args, dict):
             print(f"[RETELL] Captured tool execution payload: {tool_call_args}")
-            
-            raw_phone = str(tool_call_args.get("phone") or "")
-            json_data = {
-                "phone": sanitize_phone(raw_phone),
-                "description": str(tool_call_args.get("description") or ""),
-                "location": str(tool_call_args.get("location") or ""),
-                "customer_name": str(tool_call_args.get("customer_name") or ""),
-                "contractor_id": str(tool_call_args.get("contractor_id") or ""),
-                "professional_type": str(tool_call_args.get("professional_type") or "contractor"),
-                "language": str(tool_call_args.get("language") or "en"),
-                "demo": str(tool_call_args.get("demo") or "false").lower(),
-            }
+
+            payload_for_incident = dict(tool_call_args)
+            if not payload_for_incident.get("contractor_id") and request_contractor_id:
+                payload_for_incident["contractor_id"] = request_contractor_id
+            json_data = normalize_incident_payload(payload_for_incident)
 
             base_url = str(request.base_url).rstrip("/")
             async with httpx.AsyncClient() as client:
@@ -752,17 +805,10 @@ async def retell_webhook(request: Request):
         # ── 2. Fast Path: Flat Webhook Object ─────────────────────────────────
         has_direct_fields = bool(payload.get("phone") and payload.get("description"))
         if has_direct_fields:
-            raw_phone = str(payload.get("phone") or "")
-            json_data = {
-                "phone": sanitize_phone(raw_phone),
-                "description": str(payload.get("description") or ""),
-                "location": str(payload.get("location") or ""),
-                "customer_name": str(payload.get("customer_name") or ""),
-                "contractor_id": str(payload.get("contractor_id") or ""),
-                "professional_type": str(payload.get("professional_type") or "contractor"),
-                "language": str(payload.get("language") or "en"),
-                "demo": str(payload.get("demo") or "false").lower(),
-            }
+            payload_for_incident = dict(payload)
+            if not payload_for_incident.get("contractor_id") and request_contractor_id:
+                payload_for_incident["contractor_id"] = request_contractor_id
+            json_data = normalize_incident_payload(payload_for_incident)
 
             print(f"[RETELL] Direct payload → phone={json_data['phone']!r} | name={json_data['customer_name']!r}")
 
@@ -824,11 +870,14 @@ async def retell_webhook(request: Request):
                          or dynamic_vars.get("customer_name") 
                          or "")
 
-        contractor_id = str(payload.get("contractor_id") 
-                            or payload.get("plumber_id") 
-                            or call_analysis.get("contractor_id") 
-                            or dynamic_vars.get("contractor_id") 
-                            or "")
+        contractor_id = str(
+            payload.get("contractor_id")
+            or payload.get("plumber_id")
+            or call_analysis.get("contractor_id")
+            or dynamic_vars.get("contractor_id")
+            or request_contractor_id
+            or ""
+        )
 
         professional_type = (payload.get("professional_type") 
                              or call_analysis.get("professional_type") 
@@ -861,16 +910,16 @@ async def retell_webhook(request: Request):
 
         print(f"[RETELL] Processed payload → phone={sanitized_phone!r} | name={customer_name!r} | location={location!r}")
 
-        json_data = {
+        json_data = normalize_incident_payload({
             "phone": sanitized_phone,
             "description": description,
             "location": location,
             "customer_name": customer_name,
-            "contractor_id": contractor_id,
+            "contractor_id": contractor_id or request_contractor_id,
             "professional_type": professional_type,
             "language": language,
             "demo": demo,
-        }
+        })
 
         extract_and_track_duration(full_call, contractor_id)
 

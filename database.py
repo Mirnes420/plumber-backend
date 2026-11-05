@@ -85,10 +85,17 @@ Base.metadata.create_all(bind=engine)
 def ensure_contractors_business_name_column():
     db = SessionLocal()
     try:
-        db.execute(text("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS business_name VARCHAR"))
+        if db.bind.dialect.name == "sqlite":
+            db.execute(text("ALTER TABLE contractors ADD COLUMN business_name VARCHAR"))
+        else:
+            db.execute(text("ALTER TABLE contractors ADD COLUMN IF NOT EXISTS business_name VARCHAR"))
         db.commit()
         print("✅ contractors.business_name column ready.")
     except Exception as e:
+        if "duplicate column name" in str(e).lower() or "already exists" in str(e).lower() or "duplicate column" in str(e).lower():
+            db.rollback()
+            print("✅ contractors.business_name column already exists.")
+            return
         print(f"⚠️ business_name migration failed: {e}")
         db.rollback()
     finally:
