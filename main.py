@@ -631,21 +631,36 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     if not isinstance(extra_vars, dict):
         extra_vars = {}
 
-    from database import get_business_name
-    business_name = get_business_name(str(contractor_id)) or "Unknown Business"
+    from database import get_contractor_by_id, get_business_name
+    contractor = get_contractor_by_id(str(contractor_id))
+    business_name = (getattr(contractor, "business_name", None) or getattr(contractor, "name", None) or get_business_name(str(contractor_id)) or "Unknown Business").strip()
+    contractor_name = getattr(contractor, "name", None) or business_name or "Unknown Contractor"
+    contractor_phone = getattr(contractor, "contractor_phone", None) or ""
+    dispatcher_phone = getattr(contractor, "dispatcher_phone", None) or ""
+    contractor_email = getattr(contractor, "email", None) or ""
+    contractor_language = getattr(contractor, "language", None) or "English"
+
+    retell_vars = {
+        "contractor_id": str(contractor_id),
+        "business_name": business_name,
+        "company_name": business_name,
+        "contractor_name": contractor_name,
+        "contractor_phone": contractor_phone,
+        "dispatcher_phone": dispatcher_phone,
+        "email": contractor_email,
+        "language": contractor_language,
+        "website": "",
+    }
+    retell_vars.update(extra_vars)
 
     call_payload = {
         "agent_id": agent_id,
         "contractor_id": str(contractor_id),
         "transcript": True,
-        "retell_llm_dynamic_variables": {
-            "business_name": business_name,
-            "contractor_id": str(contractor_id),
-            **extra_vars,
-        },
+        "retell_llm_dynamic_variables": retell_vars,
     }
 
-    print(f"[RETELL] Creating v3 web call for agent={agent_id} contractor_id={contractor_id} business_name={business_name}")
+    print(f"[RETELL] Creating v3 web call for agent={agent_id} contractor_id={contractor_id} business_name={business_name} contractor_name={contractor_name}")
 
     try:
         async with httpx.AsyncClient() as client:
