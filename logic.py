@@ -477,7 +477,7 @@ async def process_incoming_incident(
     # Safety gate
     if not demo and (not customer_name and not location):
         print("🔕 Notification suppressed: no customer_name or location and not demo")
-        return triage_result, False
+        
     
     # 2. Log to Database
     ai_engine_used = triage_result.get("ai_engine", "Unknown")
