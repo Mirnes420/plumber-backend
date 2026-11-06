@@ -298,14 +298,7 @@ async def api_incident(request: Request):
     demo = None
     professional_type = "contractor"
     language = "en"
-    image_bytes = None  # always defined; populated only when a file upload is present
-
-    # ─── Fallback: Extract phone from location or description if missing ───
-    if not phone and location:
-        phone = extract_phone_from_text(location)
-
-    if not phone and description:
-        phone = extract_phone_from_text(description)
+    image_bytes = None
 
     # ─── JSON branch ───
     if "application/json" in content_type:
@@ -317,7 +310,6 @@ async def api_incident(request: Request):
             print("[ERROR] JSON body is empty")
             return JSONResponse({"status": "error", "detail": "Empty JSON body"}, status_code=400)
 
-        # Explicit decode with fallback
         try:
             body_str = body_bytes.decode("utf-8")
         except UnicodeDecodeError:
@@ -372,13 +364,11 @@ async def api_incident(request: Request):
     # ─── Unknown content type ───
     else:
         print(f"[WARNING] Unrecognized Content-Type: '{raw_ct}'")
-        # Last-ditch: try form parser anyway
         try:
             form = await request.form()
             phone = form.get("phone")
             description = form.get("description")
             location = form.get("location")
-            customer_name = form.get("customer_name")
             contractor_id = form.get("contractor_id") or form.get("plumber_id") or ""
             demo = form.get("demo")
             professional_type = form.get("professional_type") or "contractor"
@@ -388,7 +378,7 @@ async def api_incident(request: Request):
             print(f"[ERROR] Fallback parser also failed: {e}")
             return JSONResponse({"status": "error", "detail": f"Unsupported Content-Type: {raw_ct}"}, status_code=415)
 
-    # ─── Validation ───
+    # ─── Validation & Normalization ───
     normalized = normalize_incident_payload({
         "phone": phone,
         "description": description,
@@ -403,15 +393,21 @@ async def api_incident(request: Request):
     description = normalized["description"]
     location = normalized["location"]
     customer_name = normalized["customer_name"]
-    contractor_id = normalized["contractor_id"]
+    contractor_id = str(normalized["contractor_id"]).strip() if normalized.get("contractor_id") else ""
     professional_type = normalized["professional_type"]
     language = normalized["language"]
     demo = normalized["demo"]
 
-    print(f"[DEBUG] normalized phone={phone} | description={description} | location={location} | name={customer_name}")
+    # ─── Fallback: Extract phone from location or description if missing ───
+    if not phone or not str(phone).strip():
+        phone = extract_phone_from_text(location or "") or extract_phone_from_text(description or "")
 
-    if not phone:
-        return JSONResponse({"status": "error", "detail": "phone is required"}, status_code=400)
+    # Fallback placeholder for Retell voice calls where phone wasn't captured
+    if not phone or not str(phone).strip():
+        phone = "Voice Call (No Phone Provided)"
+
+    print(f"[DEBUG] normalized phone={phone} | description={description} | location={location} | name={customer_name} | contractor_id={contractor_id}")
+
     if not description:
         return JSONResponse({"status": "error", "detail": "description is required"}, status_code=400)
 
@@ -429,13 +425,21 @@ async def api_incident(request: Request):
             from database import SessionLocal, Contractor
             db = SessionLocal()
             try:
+                # Handle string vs int lookup safely
+                c_id_str = str(contractor_id)
+                c_id_int = int(c_id_str) if c_id_str.isdigit() else None
+                
                 contractor_obj = db.query(Contractor).filter(
-                    (Contractor.id == contractor_id) | (Contractor.contractor_phone.like(f"%{contractor_id}"))
+                    (Contractor.id == c_id_str) | 
+                    (Contractor.id == c_id_int if c_id_int is not None else False)
                 ).first()
+
                 if contractor_obj:
                     dispatcher_email = getattr(contractor_obj, 'email', None)
-                    dispatcher_name = getattr(contractor_obj, 'name', None)
-                    print(f"DEBUG: contractor={dispatcher_name} email={dispatcher_email}")
+                    dispatcher_name = getattr(contractor_obj, 'name', None) or getattr(contractor_obj, 'business_name', None)
+                    print(f"DEBUG: contractor found={dispatcher_name} email={dispatcher_email}")
+                else:
+                    print(f"DEBUG: No contractor object matching ID: {contractor_id}")
             finally:
                 db.close()
 
@@ -469,11 +473,13 @@ async def api_incident(request: Request):
             )
         )
 
-        await send_whatsapp_message(
-            to=phone,
-            payload_type="text",
-            content={"body": reply_msg}
-        )
+        # Only send WhatsApp message if phone looks like a valid number
+        if phone and phone != "Voice Call (No Phone Provided)" and not phone.startswith("Voice Call"):
+            await send_whatsapp_message(
+                to=phone,
+                payload_type="text",
+                content={"body": reply_msg}
+            )
 
         gear_info = triage_result.get("gear", "Standard kit")
         if isinstance(gear_info, list):
@@ -492,7 +498,6 @@ async def api_incident(request: Request):
         traceback.print_exc()
         sys.stdout.flush()
         return JSONResponse({"status": "error", "detail": str(api_err)}, status_code=500)
-
 
 def calculate_cycle_minutes_overage(plan_tier: str, used_seconds: int) -> dict:
     """Returns included minutes, used minutes, extra minutes, and amount for the cycle."""
