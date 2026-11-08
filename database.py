@@ -330,5 +330,7 @@ def get_business_name(contractor_id: str):
     """Fetches the business name for a given contractor ID."""
     contractor = get_contractor_by_id(contractor_id)
     if contractor:
-        return contractor.business_name if hasattr(contractor, 'business_name') else contractor.name
+        b_name = getattr(contractor, 'business_name', None) or getattr(contractor, 'name', None)
+        if b_name and str(b_name).strip():
+            return str(b_name).strip()
     return "Unknown Business"
