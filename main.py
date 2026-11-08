@@ -661,6 +661,7 @@ async def start_retell_call(request: Request, payload: dict | None = None):
     }
 
     print(f"[RETELL] Creating v3 web call for agent={agent_id} contractor_id={contractor_id} business_name={business_name} contractor_name={contractor_name}")
+    print(f"[RETELL] Request payload: {json.dumps(call_payload, ensure_ascii=False, default=str)}")
 
     try:
         async with httpx.AsyncClient() as client:
@@ -674,11 +675,14 @@ async def start_retell_call(request: Request, payload: dict | None = None):
                 timeout=30.0,
             )
 
+            print(f"[RETELL] Raw response status={response.status_code} body={response.text}")
+
             if response.status_code >= 400:
                 print(f"[RETELL] {response.status_code} Response: {response.text}")
 
             response.raise_for_status()
             data = response.json()
+            print(f"[RETELL] Parsed response: {json.dumps(data, ensure_ascii=False, default=str)}")
 
             return {
                 "status": "success",
