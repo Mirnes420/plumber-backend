@@ -474,11 +474,11 @@ async def process_incoming_incident(
     urgency = triage_result.get("urgency", "MEDIUM")
     summary = triage_result.get("summary", "No summary available")
 
-    # Safety gate
-    if not demo and (not customer_name and not location):
+    # Safety gate: incomplete requests are logged, but contractor alerts are not sent.
+    has_dispatch_context = bool((customer_name or "").strip() or (location or "").strip())
+    if not demo and not has_dispatch_context:
         print("🔕 Notification suppressed: no customer_name or location and not demo")
-        
-    
+
     # 2. Log to Database
     ai_engine_used = triage_result.get("ai_engine", "Unknown")
     
@@ -553,7 +553,7 @@ async def process_incoming_incident(
         # ============================================
         # 🔥 EMAIL DISPATCH（WhatsAppとは独立させる）
         # ============================================
-        if dispatcher_email:
+        if dispatcher_email and (demo or has_dispatch_context):
             localized_labels = get_localized_incident_copy("contractor_email_labels", request_language)
             subject = f"{localized_labels['new_incident']}: {professional_type.capitalize()} Required"
 
@@ -724,7 +724,9 @@ async def process_incoming_incident(
             # ============================================
 
         # --- WHATSAPP DISPATCH ---
-        if not target_contractor:
+        if not demo and not has_dispatch_context:
+            print("🔕 Contractor WhatsApp notification skipped: incomplete request data.")
+        elif not target_contractor:
             print("🔕 Contractor WhatsApp notification skipped (no valid contractor target).")
         elif target_media_url:
             await send_whatsapp_message(
