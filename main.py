@@ -925,6 +925,20 @@ async def retell_webhook(request: Request):
 
         # Transcript Regex fallback (last resort)
         transcript = full_call.get("transcript") or ""
+        transcript_obj = full_call.get("transcript_object") or []
+        user_utterance_count = 0
+        if isinstance(transcript_obj, list):
+            user_utterance_count = sum(1 for item in transcript_obj if isinstance(item, dict) and item.get("role") == "user" and str(item.get("content") or "").strip())
+
+        # If the caller hung up immediately without speaking or providing incident details, ignore it.
+        has_user_speech = user_utterance_count > 0 or bool(transcript and re.search(r"\buser:", transcript, re.IGNORECASE))
+        has_incident_info = bool((customer_name and phone) or (location and phone) or (description and description.strip()))
+        
+        if not has_incident_info and not has_user_speech:
+            print(f"[RETELL] Empty or abandoned call detected for call_id={call_id!r} (no user speech or incident info). Skipping incident creation.")
+            extract_and_track_duration(full_call, contractor_id)
+            return JSONResponse({"status": "ignored", "reason": "empty_or_abandoned_call"})
+
         # Never forward the raw live call transcript to the contractor-facing incident.
         # Keep the voice UI local-only and use a generic summary instead.
         if not description:
